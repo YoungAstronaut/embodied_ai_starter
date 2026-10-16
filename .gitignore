@@ -1,0 +1,22 @@
+# ---- macOS ----
+.DS_Store
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.egg-info/
+
+# ---- 运行日志 ----
+*.log
+
+# ---- 论文 PDF ----
+# 体积大（本目录约 626MB），且 PDF 是第三方（arXiv/出版社）内容，
+# 仓库是公开的，默认不提交。需要时：删掉下面这行，或 git add -f 某个文件。
+*.pdf
+
+# ---- 改版备份（与前一份内容重复）----
+flow_matching_starter_pack_backup_20261013/
+
+# ---- WorkBuddy 个人记忆笔记 ----
+.workbuddy/

@@ -1,0 +1,2384 @@
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Guowei Zou 1 2 Haitao Wang 1 2 Hejun Wu 1 2 Yukun Qian1 2 Yuhang Wang1 2 Weibing Li 1 2
+Abstract
+Real-time robotic control demands fast action
+generation. However, existing generative poli-
+cies based on diffusion and flow matching re-
+quire multi-step sampling, fundamentally limit-
+ing deployment in time-critical scenarios. We
+propose Dispersive MeanFlow Policy Optimiza-
+tion(DMPO), a unified framework that enables
+true one-step generation through three key com-
+ponents: MeanFlow for mathematically-derived
+single-step inference without knowledge distil-
+lation, dispersive regularization to prevent rep-
+resentation collapse, and reinforcement learn-
+ing (RL) fine-tuning to surpass expert demon-
+strations. Experiments across RoboMimic ma-
+nipulation and OpenAI Gym locomotion bench-
+marks demonstrate competitive or superior per-
+formance compared to multi-step baselines. With
+our lightweight model architecture and the three
+key algorithmic components working in syn-
+ergy, DMPO exceeds real-time control require-
+ments (>120Hz) with5–20 × inference speedup,
+reaching hundreds of Hertz on high-performance
+GPUs. Physical deployment on a Franka-Emika-
+Panda robot validates real-world applicability.
+Code is available at https://guowei-zou.
+github.io/dmpo-page/.
+1. Introduction
+Real-time control is essential for dexterous robotic manip-
+ulation, requiring fast action generation to ensure smooth
+and responsive behavior. Generative models based on diffu-
+sion and flow matching have achieved remarkable success
+in modeling complex, multimodal action distributions (Chi
+et al., 2023; Ze et al., 2024; Zhang et al., 2025a), yet their
+multi-step sampling procedures incur significant latency per
+action, fundamentally limiting deployment in time-critical
+1School of Computer Science and Engineering, Sun Yat-sen
+University, Guangzhou, China 2Guangdong Key Laboratory of Big
+Data Analysis and Processing, Guangzhou, China. Email: {zougw,
+qianyk5, wangyh253}@mail2.sysu.edu.cn; {wanght39, wuhejun,
+liwb53}@mail.sysu.edu.cn.
+Figure 1.From efficiency–performance trade-off to practical real-
+time control.Top:Existing methods lie on the trade-off curve:
+multi-step approaches (DPPO, ReinFlow, πRL) achieve strong per-
+formance but slow inference, while one-step methods (CP, MP1,
+1-DP) are fast but unstable. DMPO breaks this trade-off by occupy-
+ing the upper-right region.Bottom:DMPO’s two-stage approach:
+dispersive MeanFlow prevents representation collapse during pre-
+training, and PPO fine-tuning enables adaptation beyond demon-
+strations.
+scenarios. This motivates the pursuit of one-step generation
+policies that can match multi-step quality while enabling
+real-time control. However, existing methods face three
+interconnected challenges: (1)inference efficiency, where
+multi-step sampling in diffusion and flow-based policies
+incurs significant latency, while distillation-based one-step
+methods like CP (Prasad et al., 2024) and 1-DP (Wang et al.,
+2025) require complex training pipelines (Lu et al., 2024;
+Yan et al., 2025; Clemente et al., 2025); (2)representation
+collapse, where one-step generation methods risk mapping
+distinct observations to indistinguishable representations,
+degrading action quality with no opportunity for iterative
+1
+arXiv:2601.20701v1  [cs.RO]  28 Jan 2026
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+correction (Wang & He, 2025; Zou et al., 2026); (3)perfor-
+mance ceiling, since pure imitation learning cannot surpass
+expert demonstrations, yet reinforcement learning (RL) fine-
+tuning (Ren et al., 2025; Zhang et al., 2025b; Chen et al.,
+2025b) is impractical with slow multi-step inference and
+unstable with collapsed representations. These challenges
+form a coupled loop: fast inference requires one-step genera-
+tion, stable one-step generation requires preventing collapse,
+breaking the performance ceiling requires RL fine-tuning,
+and efficient RL fine-tuning requires both fast inference and
+high-quality representations. Any method addressing only
+one challenge will be blocked by the others, as illustrated in
+Fig. 1.
+We propose Dispersive MeanFlow Policy Optimization
+(DMPO), which resolves this coupled problem through
+three mutually supporting components. MeanFlow one-step
+generation (Geng et al., 2025a) provides mathematically
+rigorous single-step inference without distillation, estab-
+lishing the foundation for real-time control and efficient
+fine-tuning. Dispersive regularization (Wang & He, 2025)
+prevents representation collapse, ensuring one-step genera-
+tion stability while providing high-quality initialization for
+subsequent RL fine-tuning. RL fine-tuning (Zhang et al.,
+2025b) breaks through imitation learning’s performance ceil-
+ing, enabling policies to surpass expert data, while one-step
+inference efficiency makes large-scale fine-tuning practical.
+These components form a positive feedback loop: dispersive
+regularization makes one-step generation stable, one-step
+generation makes RL fine-tuning efficient, and high-quality
+pre-training provides a good starting point for RL, ultimately
+achieving a one-step policy that is both fast and effective.
+Our contributions are: (1)Framework:We introduce
+DMPO, the first framework that breaks the efficiency-
+performance trade-off in generative robot policies, achiev-
+ing 5–20× speedup while matching or exceeding multi-step
+baselines. (2)Theory:We establish the first information-
+theoretic foundation proving dispersive regularization is nec-
+essary for stable one-step generation (Appendix D), and de-
+rive the first mathematical formulation for RL fine-tuning of
+one-step policies (Appendix C). (3)Validation:We achieve
+state-of-the-art on RoboMimic (Mandlekar et al., 2021) and
+OpenAI Gym (Brockman et al., 2016), and validate real-
+time control (>120Hz) on a Franka-Emika-Panda robot.
+2. Related Work
+We organize related work according to the three categories
+identified in the introduction.
+2.1. Multi-Step Generative Policies
+Diffusion Policy (Chi et al., 2023) pioneered visuomotor
+control via denoising diffusion, with DP3 (Ze et al., 2024)
+extending to 3D inputs. Flow matching (Lipman et al., 2023;
+Boffi et al., 2025) and Rectified Flow (Liu et al., 2023)
+offer alternatives through learned velocity fields, applied
+in Flow Policy (Zhang et al., 2025a), shortcut flows (Chen
+et al., 2025c), and foundation models π0 (Team, 2024),
+π0.5 (Team, 2025). Despite expressiveness, these methods
+require tens to hundreds of NFEs per action and cannot
+exceed expert performance through imitation learning alone.
+2.2. One-Step Generation Methods
+Consistency Policy (Prasad et al., 2024) and 1-DP (Wang
+et al., 2025) reduce generation to one step via distillation
+but remain bounded by teacher capability (Lu et al., 2024;
+Yan et al., 2025; Clemente et al., 2025; Chen et al., 2025a;
+Liu et al., 2025a). MP1 (Sheng et al., 2026) is the first to
+apply MeanFlow (Geng et al., 2025a;b; Guo et al., 2025; Hu
+et al., 2025) for distillation-free one-step generation, demon-
+strating that averaged-velocity flow models can be deployed
+without a diffusion teacher. However, one-step generation
+tends to collapse intermediate representations. Although
+dispersive regularization has been applied to multi-step dif-
+fusion models (Wang & He, 2025; Zou et al., 2026) to
+improve representation quality, its application to distillation-
+free one-step policies remains unexplored. We present the
+first study applying dispersive regularization to MeanFlow
+for stable one-step generation.
+2.3. RL Fine-tuning for Generative Policies
+DPPO (Ren et al., 2025) pioneered RL fine-tuning for dif-
+fusion policies (Schulman et al., 2017), ReinFlow (Zhang
+et al., 2025b) extended this to flow-based policies, and πRL
+(Chen et al., 2025b) further scaled RL for VLAs (Lu et al.,
+2025; Liu et al., 2025b; McAllister et al., 2025). However,
+all operate on multi-step policies, inheriting computational
+overhead (Zou et al., 2026; Wagenmaker et al., 2025). More-
+over, RL fine-tuning can be unstable, where performance
+degrades as training progresses. Behavior cloning regu-
+larization (Nair et al., 2021) mitigates this by preventing
+catastrophic forgetting. DMPO fills the gap by developing
+stable RL fine-tuning for true one-step policies.
+3. Methodology
+This section presents the DMPO methodology. We first
+provide a framework overview in Section 3.1, then detail
+our three contributions: MeanFlow one-step generation in
+Section 3.2, dispersive regularization in Section 3.3, and RL
+fine-tuning with BC regularization in Section 3.4. Detailed
+mathematical derivations are provided in Appendix C. Fig-
+ure 2 presents the complete DMPO pipeline, organized as
+two stages. Our core design philosophy is to achieve true
+real-time robotic control by combining a lightweight model
+architecture with complementary algorithm design.
+2
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Figure 2.DMPO Framework Overview.Stage 1 (Top & Middle):Pre-training with dispersive MeanFlow. MeanFlow learns velocity
+fields that transform noise into actions via Vision Transformer encoding with dispersive losses to prevent representation collapse.Stage 2
+(Bottom):PPO fine-tuning formulated as a two-layer policy factorization: the outer layer is the true environment MDP, while the inner
+latent chain only reparameterizes the action distribution.
+3.1. Framework Overview
+Lightweight Architecture for Real-Time Control.Fol-
+lowing prior robotic learning work (Peroldi et al., 2021),
+we adopt a single-layer light ViT with 128-dimensional em-
+beddings combined with an MLP action head, totaling only
+1.78M parameters (48× smaller than ViT-Base). This com-
+pact design enables inference speeds exceeding 120Hz for
+real-time control.
+Stage 1: Pre-Training DMPO.The top and middle pan-
+els illustrate pre-training. MeanFlow learns a velocity field
+u(z, s, τ) that transforms Gaussian noise into action trajecto-
+ries, enabling few-step or one-step sampling. Visual inputs
+are processed by a Vision Transformer and fused with robot
+state into the conditional embedding. An MLP processes
+this embedding along with time embeddings to predict ve-
+locity fields. Dispersive loss is applied to the conditional
+embedding to prevent representation collapse.
+Stage 2: RL Fine-Tuning DMPO.The bottom panel shows
+the fine-tuning stage. We adopt atwo-layer policy factor-
+ization: the outer layer is the actual environment MDP with
+rewards and visitation frequencies, whereas the inner layer
+contains the latent denoising chain aK−1 → · · · →a 0 that
+merely reparameterizes πθ(a|o) . Since latent states neither
+interact with the environment nor generate rewards, PPO
+advantages and value targets are always defined on the outer
+environment. Policy updates follow PPO with clipped prob-
+ability ratios ρt(θ) and GAE advantages ˆAt, while behavior
+cloning regularization prevents catastrophic forgetting.
+3.2. One-Step Generation Policy in DMPO
+MeanFlow extends flow matching by learning anaverage
+velocity fieldrather than instantaneous velocities. Given
+linear interpolation zτ = (1−τ)a+τ ϵ between target
+action a (at τ=0) and noise ϵ∼ N(0, I) (at τ=1), the
+average velocity over interval[r, τ]is:
+3
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+u(zτ , r, τ)≜ 1
+τ−r
+Z τ
+r
+v(zξ, ξ)dξ,(1)
+satisfying the displacement identity (τ−r)u(z τ , r, τ) =
+zτ −z r. Differentiating yields theMeanFlow identity:
+u(zτ , r, τ) =v(z τ , τ)−(τ−r) d
+dτ u(zτ , r, τ),(2)
+where the total derivative d
+dτ u=v τ · ∇zu+∂ τ u involves a
+Jacobian-vector product (JVP, see Eq. 20 in Appendix C.1).
+The MeanFlow training objective is:
+LMF =E (o,a), ϵ,(r,τ)
+h
+
+uθ(zτ , r, τ, o)−u tgt
+
+
+2i
+,(3)
+where utgt =v τ −(τ−r) d
+dτ uθ is the target velocity (Eq. 21),
+andv τ =ϵ−ais the instantaneous velocity pointing from
+data to noise. Complete formulations including JVP com-
+putation and time sampling strategies are provided in Ap-
+pendix C.1.
+3.3. Dispersive Regularization for Preventing Collapse
+in One-Step Generation Policy
+MeanFlow suffers fromrepresentation collapsewhere dis-
+tinct observations map to similar embeddings. We identify
+two contributing factors: (1) the averaged velocity training
+objective is less sensitive to fine-grained representation dif-
+ferences, and (2) few-step inference amplifies this issue by
+providing limited opportunities to query the representation.
+Detailed theoretical analysis is provided in Appendix D.1.
+Dispersive regularization addresses the root cause by en-
+couraging intermediate features H={h 1, . . . ,hB} ⊂R d
+to spread in feature space. We explore four formulations:
+(1) InfoNCE-L2maximizes pairwise L2 distances via con-
+trastive learning:
+LInfoNCE-L2 =−E
+"
+log exp(∥hi∥2
+2/τ)P
+k̸=i exp(−∥hi −h k∥2
+2/τ)
+#
+(4)
+where τ >0 is the temperature parameter. We also explore
+(2) InfoNCE-Cosinefor angular separation,(3) Hinge Loss
+for minimum separation margin, and(4) Covariance-Based
+loss for feature decorrelation. Detailed formulations are
+provided in Appendix C.2.
+The Stage 1 training objective combines MeanFlow and
+dispersive regularization:
+LStage1 =L MF +α dispLdisp(H(Cond)),(5)
+where αdisp >0 is the balancing coefficient, and we ap-
+ply dispersive regularization to theconditional embedding
+H(Cond) output by the Vision Transformer encoder. The
+conditional embedding encodes observation information (vi-
+sual features and robot state) and is the key representation
+for distinguishing different samples. Our analysis shows
+that dispersive regularization on the conditional embedding
+effectively mitigates representation collapse in few-step in-
+ference. Detailed discussion is provided in Appendix D.1.
+3.4. RL Fine-tuning for One-Step Generation Policies
+Pure imitation learning cannot surpass expert demonstra-
+tions. We address this through PPO fine-tuning with behav-
+ior cloning (BC) regularization.
+Stochastic Sampling.During fine-tuning, we augment
+deterministic MeanFlow with exploration noise. Each tran-
+sition in theK-step Markov chain follows:
+ak+1 ∼ N
+
+ak −∆τ k ·u θ(ak, τk+1, τk, o), σ 2I
+
+(6)
+where τk = 1−k/K is the flow time at step k, and ∆τk =
+τk −τ k+1 = 1/Kis the step size.
+Log-Probability.For PPO, the joint log-probability decom-
+poses over the denoising chain:
+logπ θ(a0:K |o) = logp 0(a0) +
+K−1X
+k=0
+logN(a k+1|µk, σ2I)
+(7)
+where µk =a k −∆τ k ·u θ(ak, τk+1, τk, o). The full deriva-
+tion is provided in Appendix C.3 (Eq. 31).
+Training Objective.We use standard PPO with clipped
+policy gradient, value loss, and entropy bonus (Schulman
+et al., 2017), combined with BC regularization to prevent
+catastrophic forgetting:
+LBC =E o
+h
+∥aω(o)−a θ(o)∥2
+2
+i
+(8)
+where aω is the action from the frozen pre-trained policy
+with parametersω. The total fine-tuning objective is:
+LStage2 =L PPO +λ BCLBC (9)
+where λBC controls the regularization strength (see Eq. 39
+for the complete formulation). Detailed algorithms are in
+Appendix C.3.
+4. Experiments
+We evaluate pre-training and fine-tuning on four RoboMimic
+manipulation tasks (Mandlekar et al., 2021) and OpenAI
+Gym locomotion tasks (Brockman et al., 2016), using 100
+evaluation episodes per task. To ensure fair comparison
+with baseline algorithms ReinFlow (Zhang et al., 2025b)
+and DPPO (Ren et al., 2025), we adopt the same Simplified
+RoboMimic dataset used in their experiments. Details are
+provided in Appendix B.
+Our experiments are designed to answer three research ques-
+tions aligned with our contributions:
+4
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+0.6ms 11.1ms 41.5ms
+70%
+80%
+90%
+100%
+Lift
+Success Rate
+SC RF
+MF
+MF+Disp
+disp = 0.1
+0.6ms 11.1ms 41.5ms
+80%
+100%
+SC
+RF
+MF
+MF+Disp
+disp = 0.5
+0.6ms 11.1ms 41.5ms
+80%
+90%
+100%
+SC
+RF
+MF
+MF+Disp
+disp = 0.9
+0.5ms 8.8ms 40.4ms
+60%
+70%
+80%
+Can
+Success Rate
+SC RF
+MF
+MF+Disp
+0.5ms 8.8ms 40.4ms
+40%
+60%
+80%
+SC
+RFMFMF+Disp
+0.5ms 8.3ms 40.4ms
+40%
+60%
+80%
+SC
+RFMFMF+Disp
+0.6ms 10.5ms 42.2ms
+30%
+40%
+Square
+Success Rate
+SC RF
+MF
+MF+Disp
+0.6ms 10.5ms 42.2ms
+20%
+30%
+40%
+SC
+RFMF
+MF+Disp
+0.6ms 10.6ms 41.3ms
+20%
+30%
+40%
+SC
+RF
+MF
+MF+Disp
+0.9ms 16.5ms 70.7ms
+Inference Time (ms)
+30%
+40%
+Transport
+Success Rate
+SC
+RFMF
+MF+Disp
+0.9ms 16.5ms 70.7ms
+Inference Time (ms)
+20%
+30%
+40%
+SC
+RF
+MF
+MF+Disp
+0.9ms 15.6ms 63.4ms
+Inference Time (ms)
+20%
+30%
+40%
+50%
+SC
+RF
+MF
+MF+Disp
+SC: ShortCut (32 steps)
+RF: ReFlow (128 steps)
+MF: (Ours) MeanFlow (1 step)
+MF+Disp: (Ours) MeanFlow + Dispersive (1 step)
+Figure 3.Stage 1 (Pre-training):Inference efficiency vs. success rate trade-off across four RoboMimic tasks and three dispersive weights
+(αdisp ∈ {0.1,0.5,0.9} ). The upper-left region (fast + high success) is ideal. MF and MF+Disp lie on the Pareto frontier, achieving
+6–10×speedup over ShortCut and 25–40×over ReFlow while maintaining superior success rates.
+RQ1:Can one-step generation match or exceed multi-step
+diffusion policies while achieving faster inference?
+RQ2:Is dispersive regularization essential for preventing
+mode collapse in one-step generation?
+RQ3:Can online RL fine-tuning push beyond the perfor-
+mance ceiling of offline expert data?
+4.1. Stage1: Pre-Training Results of DMPO (RQ1 and
+RQ2)
+4.1.1. ROBOMIMC PRE-TRAINING TASKS
+Figure 3 demonstrates that MeanFlow achieves dramatic
+inference efficiency gains withtrue one-step generation.
+Comparing single-sample inference times measured on an
+NVIDIA RTX 4090 GPU: MF/MF+Disp at 1 step takes only
+∼0.6–1.0ms, while ShortCut at 32 steps takes∼9–16ms and
+ReFlow at 128 steps takes ∼40–70ms. Our method is15–
+20×fasterthan ShortCut and60×fasterthan ReFlow.
+More importantly, MF and MF+Disp occupy thePareto
+frontier, corresponding to the upper-left region in Figure 3:
+despite using only a single denoising step, our method
+achieves competitive or superior success rates compared
+to baselines that require orders of magnitude more com-
+putation. Taking αdisp = 0.1 as an example: on Lift,
+MF+Disp achieves near-100% success. On Can, both MF
+and MF+Disp significantly outperform ShortCut and Re-
+Flow. On Transport, MF maintains strong performance
+while being 60×faster than ReFlow.
+Figure 4 reveals the effect of dispersive regularization across
+different denoising steps. ReFlow, shown as green triangles,
+performs poorly at low steps: on Lift, 1-step success is
+only ∼60%, requiring 32–64 steps to approach 95%. This
+indicates that learned vector fields produce highly curved
+trajectories with large integration errors under few-step sam-
+pling. ShortCut, shown as orange circles and designed for
+few-step inference, improves over ReFlow but exhibits un-
+stable performance with limited ceiling. MF, shown as blue
+squares, achieves near-saturated performance at 1–5 steps
+even without dispersive regularization. MF+Disp, shown as
+red circles, further stabilizes performance, with noticeably
+reduced variance as evidenced by narrower shaded regions
+on harder tasks such as Square and Transport.
+5
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+1 2 4 5 8 16 32 64 1280%
+50%
+100%
+Lift
+Success Rate
+disp = 0.1
+1 2 4 5 8 16 32 64 1280%
+50%
+100%
+disp = 0.5
+1 2 4 5 8 16 32 64 1280%
+50%
+100%
+disp = 0.9
+1 2 4 5 8 16 32 64 1280%
+25%
+50%
+75%
+Can
+Success Rate
+1 2 4 5 8 16 32 64 1280%
+50%
+100%
+1 2 4 5 8 16 32 64 1280%
+50%
+100%
+1 2 4 5 8 16 32 64 1280%
+20%
+40%
+Square
+Success Rate
+1 2 4 5 8 16 32 64 1280%
+20%
+40%
+1 2 4 5 8 16 32 64 1280%
+20%
+40%
+1 2 4 5 8 16 32 64 128
+Denoising Steps
+0%
+20%
+40%
+60%
+Transport
+Success Rate
+1 2 4 5 8 16 32 64 128
+Denoising Steps
+0%
+20%
+40%
+60%
+1 2 4 5 8 16 32 64 128
+Denoising Steps
+0%
+20%
+40%
+ShortCut Flow ReFlow DMPO (w/o disp.) (Ours) DMPO (with disp.) (Ours)
+Figure 4.Stage 1 (Pre-training):Success rate vs. denoising steps on a 4 ×3 grid. Rows correspond to Lift, Can, Square, and Transport
+tasks with increasing difficulty, and columns correspond to αdisp ∈ {0.1,0.5,0.9} . MeanFlow variants, MF and MF+Disp, achieve
+near-saturated performance at 1–5 steps, while ReFlow and ShortCut require 32–128 steps. Dispersive regularization reduces variance on
+complex tasks.
+The three columns reveal the effect of αdisp: dispersive regu-
+larization consistently improves task success rate across all
+tested values (0.1, 0.5, 0.9), demonstrating robustness rather
+than hyperparameter sensitivity. The improvement is more
+pronounced on complex tasks, confirming that dispersive
+regularizationprevents representation collapse, which is
+essential for stable one-step generation.
+We observe a strong linear relationship between success
+rate improvement and task complexity (Pearson r= 0.924 ),
+suggesting a simple guideline: increase αdisp for more chal-
+lenging tasks. Details are in Appendix A.2.2.
+4.1.2. GYMPRE-TRAININGTASKS
+Pre-training results on Gym locomotion and Kitchen tasks
+are reported in the Appendix. Using the same D4RL datasets
+as ReinFlow, DMPO achieves competitive or superior per-
+formance on Hopper, Walker2d, and Kitchen tasks. No-
+tably, DMPO maintains stable performance across inference
+steps, with clear advantages in the 1–4 step regime: on Hop-
+per, DMPO achieves the best 1-step reward of 1364.1 and
+2-step reward of 1484.8. On Kitchen-Complete, DMPO
+reaches 52.5% at 1-step versus ShortCut’s 35%. These re-
+sults confirm that MeanFlow’s few-step sampling advantage
+generalizes beyond RoboMimic to locomotion and kitchen
+manipulation domains, while dispersive regularization con-
+tinues to stabilize performance across different step counts.
+We additionally report Humanoid pre-training results and
+note that the Ant performance gap is partly due to dataset
+version differences between ant-medium-expert-v2 and v0,
+as discussed in Appendix A.2.1.
+4.2. Stage2: Fine-Tuning Results of DMPO (RQ3)
+To evaluate the effectiveness of PPO fine-tuning for Mean-
+Flow policies (Contribution 3), we conduct experiments
+on both RoboMimic manipulation tasks and OpenAI Gym
+locomotion benchmarks.
+4.2.1. ROBOMIMICFINE-TUNINGRESULTS
+Figure 5 presents the PPO fine-tuning results on three
+RoboMimic manipulation tasks: Can, Square, and Transport.
+We omit Lift as MeanFlow already achieves near-100% suc-
+cess rate during Stage 1 pretraining, leaving no room for
+improvement via fine-tuning. DMPO achieves competitive
+or superior performance compared to all baselines while
+6
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+0 2 4 6
+(a) Can ×106
+0
+0.2
+0.5
+0.8
+1.0Success Rate
+0 0.5 1.0 1.5 2.0 2.5
+(b) Square ×107
+0
+0.2
+0.5
+0.8
+1.0Success Rate
+0 0.5 1.0 1.5 2.0 2.5
+(c) Transport ×107
+0
+0.2
+0.5
+0.8
+1.0Success Rate
+Gaussian (NFE=1)
+DPPO (NFE=5)
+ReinFlow-R (NFE=20)
+ReinFlow-S (NFE=4)
+DMPO (NFE=1)
+Figure 5.Stage 2 (PPO Fine-tuning):Performance on RoboMimic manipulation tasks. MeanFlow in blue is compared with DPPO in
+yellow, Gaussian in green, ReinFlow-S in red, and ReinFlow-R in purple. Lift is omitted as MeanFlow achieves 100% success during
+Stage 1 pretraining.
+0 2 4 6
+(a) Hopper ×107
+0
+1.5
+3.0Episode Reward
+×103
+0 2 4 6
+(b) Walker2d ×107
+0
+2
+4Episode Reward
+×103
+0 2 4 6
+(c) Ant ×107
+0
+1
+2
+3
+4Episode Reward
+×103
+0 0.5 1.0 1.5
+(d) Humanoid ×107
+0
+2
+4Episode Reward
+×103
+0 2 4 6 8
+(e) Kitchen-Mixed ×106
+0
+0.5
+1.0T ask Completion Rate
+0 2 4 6 8
+(f) Kit.-Complete ×106
+0
+0.5
+1.0T ask Completion Rate
+FQL (NFE=1)
+DPPO (NFE=20)
+ReinFlow-R (NFE=20)
+ReinFlow-S (NFE=4)
+DMPO (NFE=1)
+DMPO (NFE=2)
+Figure 6.Stage 2 (PPO Fine-tuning):Performance on OpenAI Gym locomotion tasks in panels a–d and Kitchen manipulation tasks in
+panels e–g. MeanFlow in blue is compared with DPPO in yellow, ReinFlow-S in red, ReinFlow-R in purple, and FQL in light blue.
+requiring only 1 denoising step. On theCantask, DMPO
+achieves 100% success rate faster than all baselines, out-
+performing DPPO at 99.3% and ReinFlow-R at 99.0%. On
+Square, DMPO reaches 83% peak success rate, compet-
+itive with DPPO at 78.3% and ReinFlow-R at 80%. On
+Transport, DMPO achieves 88% success rate, matching
+ReinFlow-S performance while significantly outperforming
+the Gaussian baseline.
+4.2.2. OPENAI GYM ANDKITCHENLOCOMOTION
+RESULTS
+We evaluate PPO fine-tuning on four OpenAI Gym locomo-
+tion tasks, namely Hopper, Walker2d, Ant, and Humanoid,
+as well as two Kitchen tasks, Complete and Partial, from
+D4RL (Fu et al., 2020). As shown in Figure 6, DMPO
+achieves stable and efficient learning across all tasks while
+requiring only a single denoising step at inference.
+On Gym tasks, DMPO with only 1 denoising step achieves
+comparable performance to multi-step baselines on Hopper,
+Walker2d, and Humanoid (Figure 6a, b, d), while signifi-
+cantly outperforming all baselines on Ant (Figure 6c).
+On Kitchen tasks, which require long-horizon sequen-
+tial control, DMPO quickly reaches 100% completion on
+Kitchen-Complete (Figure 6e) and maintains equally strong,
+stable performance on Kitchen-Mixed and Kitchen-Partial
+(Figures 6f–g).
+Overall, DMPO with one denoising step matches or outper-
+forms multi-step diffusion baselines, including DPPO at 20
+steps and ReinFlow at 4 steps, indicating that one-step gener-
+ation preserves fine-tuning effectiveness. BC regularization
+with λBC = 0.05–0.2 prevents catastrophic forgetting and
+enables consistent improvement over the pretrained imi-
+tation baseline across diverse task complexities. Detailed
+comparisons with other one-step generation models and
+additional baselines are provided in Appendix A.1.
+4.3. Physical Robot Experiments
+To validate practical applicability, we deploy DMPO on
+a 7-DOF Franka-Emika-Panda robot equipped with an In-
+7
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Figure 7.Real-world deployment of DMPO on a Franka Panda robot.Left: Hardware setup with Intel RealSense D435i camera
+for visual observation. Right: Qualitative comparison between MP1 baseline (top row) and our DMPO method (rows 2-3) across four
+manipulation tasks. MP1 fails on Lift and Can tasks due to imprecise grasping, while DMPO successfully completes all four tasks (Lift,
+Can, Square, Transport), demonstrating superior sim-to-real transfer capability. Green checkmarks indicate successful task completion;
+red crosses indicate failure.
+tel RealSense D435i camera across all four RoboMimic
+tasks. On RTX 2080, DMPO with 1-step inference requires
+only 2.6ms for neural network forward pass, compared to
+12.0ms for 5-step ShortCut and 47.7ms for 20-step ReFlow,
+achieving 4.6× and 18× speedup respectively. Including
+all pipeline stages, DMPO achieves 9.6ms total latency,
+enabling over 100Hz control frequency.
+As shown in Figure 7, we compare MP1 against DMPO
+on real hardware. We focus on MP1 as it is the only other
+MeanFlow-based one-step method; other baselines (DPPO,
+ReinFlow) are compared in simulation, and deploying multi-
+step methods on real robots incurs significant latency. MP1
+fails on Lift and Can tasks due to imprecise grasping caused
+by representation collapse, while DMPO successfully com-
+pletes all four tasks including Square and Transport. These
+results demonstrate that DMPO’s simulation advantages
+transfer to physical hardware, validating real-time control
+capability and sim-to-real generalization. Detailed setup
+and latency breakdown are in Appendix A.4.
+4.4. Additional Analysis
+We provide additional analysis in Appendix A: compari-
+son with one-step generation baselines demonstrates DMPO
+achieves superior performance with high data efficiency
+(Appendix A.1), inference time comparison shows signifi-
+cant speedup over baselines (Appendix A.1.2), and holistic
+radar comparison confirms top scores across all evaluation
+dimensions (Appendix A.1.3).
+5. Conclusion
+We presented DMPO, a unified framework that enables
+real-time robotic control through true one-step genera-
+tion. By integrating MeanFlow, dispersive regularization,
+and RL fine-tuning, DMPO achieves both fast inference
+and high task performance without the efficiency-quality
+trade-off that limits existing methods. MeanFlow provides
+mathematically-derived one-step inference without knowl-
+edge distillation, while dispersive regularization ensures
+stable generation by maintaining representation diversity.
+RL fine-tuning further enables policies to surpass expert
+demonstrations, breaking through the performance ceiling.
+DMPO achieves true real-time robotic control with only
+0.6ms inference latencyon RTX 4090. Experiments across
+RoboMimic manipulation and OpenAI Gym locomotion
+benchmarks demonstrate near state-of-the-art performance.
+Compared to vanilla MeanFlow without dispersive regu-
+larization, our dispersive regularization improves task suc-
+cess rates by5–10%. Furthermore, RL fine-tuning boosts
+performance by over50%compared to behavior cloning
+pre-training alone. We successfully deployed DMPO on
+a Franka-Emika-Panda robot, achieving real-time control
+and validating effective sim-to-real transfer. These results
+demonstrate that DMPO achieves both fast inference and
+high task performance, confirming our core claim:one step
+is enoughfor real-time generative robotic control.
+8
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Impact Statement
+This paper presents DMPO, a framework for real-time
+robotic control through efficient one-step generative poli-
+cies. By reducing inference latency from hundreds of mil-
+liseconds to a few milliseconds, our work enables more re-
+sponsive and safer human-robot interaction in time-critical
+applications. The improved efficiency also reduces computa-
+tional requirements for robot learning, potentially lowering
+the environmental cost of training robotic systems. We do
+not anticipate negative societal impacts specific to this work
+beyond those common to robotics research.
+References
+Boffi, N. M., Albergo, M. S., and Vanden-Eijnden, E. Flow
+map matching.Transactions on Machine Learning Re-
+search (TMLR), 2025.
+Brockman, G., Cheung, V ., Pettersson, L., Schneider, J.,
+Schulman, J., Tang, J., and Zaremba, W. Openai gym.
+arXiv preprint arXiv:1606.01540, 2016.
+Chen, H., Zhang, K., Tan, H., Guibas, L., Wetzstein, G.,
+and Bi, S. pi-flow: Policy-based few-step generation via
+imitation distillation.arXiv preprint arXiv:2510.14974,
+2025a.
+Chen, J. et al. πRL: Online rl fine-tuning for flow-
+based vision-language-action models.arXiv preprint
+arXiv:2510.25889, 2025b.
+Chen, W., Ou, Z., and Li, Y . Neural flow samplers with
+shortcut models. InICLR 2025 Workshop on Foundation
+Models for Process Intelligence (FPI), 2025c.
+Chen, X. and He, K. Exploring simple siamese representa-
+tion learning. InProceedings of the IEEE/CVF Con-
+ference on Computer Vision and Pattern Recognition
+(CVPR), 2021.
+Chi, C., Feng, S., Du, Y ., Xu, Z., Cousineau, E., Burchfiel,
+B., and Song, S. Diffusion policy: Visuomotor policy
+learning via action diffusion. InConference on Robot
+Learning (CoRL), 2023.
+Clemente, A. et al. Two-steps diffusion policy for robotic
+manipulation via genetic denoising. InAdvances in Neu-
+ral Information Processing Systems (NeurIPS), 2025.
+Fu, J., Kumar, A., Nachum, O., Tucker, G., and Levine,
+S. D4rl: Datasets for deep data-driven reinforcement
+learning.arXiv preprint arXiv:2004.07219, 2020.
+Geng, Z., Deng, M., Bai, X., Kolter, J. Z., and He, K. Mean
+flows for one-step generative modeling. InAdvances
+in Neural Information Processing Systems (NeurIPS),
+2025a.
+Geng, Z. et al. Improved mean flows on the chal-
+lenges of fast-forward generative models.arXiv preprint
+arXiv:2512.02012, 2025b.
+Guo, X. et al. Splitmeanflow: Interval splitting consis-
+tency in few-step generative modeling.arXiv preprint
+arXiv:2507.16884, 2025.
+Hu, X. et al. Meanflow transformers with representation
+autoencoders.arXiv preprint arXiv:2511.13019, 2025.
+Lipman, Y ., Chen, R. T. Q., Ben-Hamu, H., Nickel, M.,
+and Le, M. Flow matching for generative modeling. In
+International Conference on Learning Representations
+(ICLR), 2023.
+Liu, H., Xie, Q., Ye, T., Deng, Z., Chen, C., Tang, S., Fu,
+X., Lu, H., and Zha, Z.-J. Scott: Accelerating diffusion
+models with stochastic consistency distillation. InPro-
+ceedings of the AAAI Conference on Artificial Intelligence
+(AAAI), 2025a.
+Liu, J., Liu, G., Liang, J., Li, Y ., Liu, J., Wang, X., Wan, P.,
+Zhang, D., and Ouyang, W. Flow-grpo: Training flow
+matching models via online rl. InAdvances in Neural
+Information Processing Systems (NeurIPS), 2025b.
+Liu, X., Gong, C., and Liu, Q. Flow straight and fast:
+Learning to generate and transfer data with rectified flow.
+InInternational Conference on Learning Representations
+(ICLR), 2023.
+Lu, G., Gao, Z., Chen, T., Dai, W., Wang, Z., and Tang,
+Y . Manicm: Real-time 3d diffusion policy via consis-
+tency model for robotic manipulation.arXiv preprint
+arXiv:2406.01586, 2024.
+Lu, G., Guo, W., Zhang, C., Zhou, Y ., Jiang, H., Gao, Z.,
+Tang, Y ., and Wang, Z. Vla-rl: Towards masterful and
+general robotic manipulation with scalable reinforcement
+learning.arXiv preprint arXiv:2505.18719, 2025.
+Mandlekar, A., Xu, D., Wong, J., Nasiriany, S., Wang, C.,
+Kulkarni, R., Fei-Fei, L., Savarese, S., Zhu, Y ., and
+Mart´ın-Mart´ın, R. What matters in learning from of-
+fline human demonstrations for robot manipulation. In
+Conference on Robot Learning (CoRL), 2021.
+McAllister, D., Ge, S., Yi, B., Kim, C. M., Weber, E., Choi,
+H., Feng, H., and Kanazawa, A. Flow matching policy
+gradients.arXiv preprint arXiv:2507.21053, 2025.
+Nair, A., Dalal, M., Gupta, A., and Levine, S. Awac: Accel-
+erating online reinforcement learning with offline datasets.
+InInternational Conference on Learning Representations
+(ICLR), 2021. arXiv:2006.09359.
+9
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Peroldi, F., Lynch, C., Wahid, A., Tompson, J., Yu, T., Gu,
+S. S., Hsu, J., Perona, P., Zeng, A., Dwibedi, D., and
+Levine, S. Implicit behavioral cloning. InConference on
+Robot Learning (CoRL), 2021.
+Prasad, A., Lin, K., Wu, J., Zhou, L., and Bohg, J. Consis-
+tency policy: Accelerated visuomotor policies via con-
+sistency distillation. InRobotics: Science and Systems
+(RSS), 2024.
+Ren, A. Z., Lidard, J., Ankile, L. L., Simeonov, A., Agrawal,
+P., Majumdar, A., Burchfiel, B., Dai, H., and Simchowitz,
+M. Diffusion policy policy optimization. InInternational
+Conference on Learning Representations (ICLR), 2025.
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and
+Klimov, O. Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347, 2017.
+Shafiullah, N. M. M., Cui, Z. J., Altanzaya, A., and Pinto, L.
+Behavior transformers: Cloning k modes with one stone.
+InAdvances in Neural Information Processing Systems
+(NeurIPS), 2022.
+Sheng, J., Wang, Z., Li, P., and Liu, M. Mp1: Meanflow
+tames policy learning in 1-step for robotic manipulation.
+InProceedings of the AAAI Conference on Artificial In-
+telligence (AAAI), 2026.
+Team, P. I. π0: A vision-language-action flow model for
+general robot control.arXiv preprint arXiv:2410.24164,
+2024.
+Team, P. I. π0.5: a vision-language-action model with open-
+world generalization. InProceedings of Machine Learn-
+ing Research (PMLR), 2025.
+Wagenmaker, A., Nakamoto, M., Zhang, Y ., Park, S.,
+Yagoub, W., Nagabandi, A., Gupta, A., and Levine, S.
+Steering your diffusion policy with latent space reinforce-
+ment learning. InConference on Robot Learning (CoRL),
+2025.
+Wang, R. and He, K. Diffuse and disperse: Image gener-
+ation with representation regularization.arXiv preprint
+arXiv:2506.09027, 2025.
+Wang, Z. et al. One-step diffusion policy: Fast visuomo-
+tor policies via diffusion distillation. InInternational
+Conference on Machine Learning (ICML), 2025.
+Yan, X. et al. Maniflow: A general robot manipulation
+policy via consistency flow training. InConference on
+Robot Learning (CoRL), 2025.
+Ze, Y ., Zhang, G., Zhang, K., Hu, C., Wang, M., and Xu,
+H. 3d diffusion policy: Generalizable visuomotor pol-
+icy learning via simple 3d representations. InRobotics:
+Science and Systems (RSS), 2024.
+Zhang, Q., Liu, Z., Fan, H., Liu, G., Zeng, B., and Liu,
+S. Flowpolicy: Enabling fast and robust 3d flow-based
+policy via consistency flow matching for robot manipula-
+tion. InProceedings of the AAAI Conference on Artificial
+Intelligence (AAAI), 2025a.
+Zhang, T., Wang, M., Yu, W., Choudhury, S., Garg, A., and
+Zhao, D. Reinflow: Fine-tuning flow matching policy
+with online reinforcement learning. InAdvances in Neu-
+ral Information Processing Systems (NeurIPS), 2025b.
+Zou, G., Lyu, J., Li, X., and Lu, Z. D2ppo: Diffusion policy
+policy optimization with dispersive loss. InProceedings
+of the AAAI Conference on Artificial Intelligence (AAAI),
+2026.
+10
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Appendix Overview
+This appendix provides supplementary material organized as follows:
+Appendix A: Experimental Resultsprovides comprehensive experimental results including comparative evaluation, Stage
+1 pre-training results on RoboMimic and D4RL benchmarks, Stage 2 fine-tuning results, and physical robot experiment
+details.
+Appendix B: Dataset Analysis and Visualizationpresents detailed analysis of dataset selection rationale and distribution
+characteristics for both RoboMimic and D4RL datasets.
+Appendix C: Algorithm & Method Formulascontains complete mathematical formulations for Stage 1 MeanFlow
+pre-training with dispersive regularization and Stage 2 PPO fine-tuning.
+Appendix D: Theoretical Analysis and Unified Framework Designprovides information-theoretic foundation for
+dispersive regularization and explains the unified framework design that jointly considers model architecture and algorithmic
+improvements.
+A. Experimental Results
+This appendix provides comprehensive experimental results organized by training stage. Section A.1 presents comparative
+evaluation and validation on RoboMimic, Section A.2 presents Stage 1 pre-training results on Gym and RoboMimic task
+complexity analysis, Section A.3 presents Stage 2 fine-tuning results on Gym, and Section A.4 details physical robot
+experiments.
+A.1. Comparative Evaluation and Validation
+A.1.1. PERFORMANCECOMPARISONACROSSDATASETVARIANTS
+Dataset Choice.To ensure fair comparison with baseline algorithms DPPO (Ren et al., 2025) and ReinFlow (Zhang et al.,
+2025b), we adopt the same Simplified Robomimic MH dataset used in their experiments. For detailed dataset analysis and
+visualization, see Appendix B.
+Table 1.Performance Comparison Across Dataset Variants (Multi-Human data). All experiments use the multi-human (mh) dataset
+variant. Full dataset contains 300 trajectories per task, and Simplified dataset contains 100 trajectories.
+Data Method Venue NFE Dist. Lift Can Square Transport
+Full Dataset (300 trajectories) - Baselines
+Full LSTM-GMM CoRL’21 (Mandlekar et al., 2021) -✗0.93 0.81 0.59 0.20
+Full IBC CoRL’21 (Peroldi et al., 2021) -✗0.02 0.01 0.00 0.00
+Full BET NeurIPS’22 (Shafiullah et al., 2022) -✗0.99 0.90 0.43 0.06
+Full DP-C RSS’23 (Chi et al., 2023) 100✗0.97 0.96 0.82 0.46
+Full DP-T RSS’23 (Chi et al., 2023) 100✗1.00 0.94 0.81 0.35
+Full CP RSS’24 (Prasad et al., 2024) 3✓- - 0.71 0.37
+Full CP RSS’24 (Prasad et al., 2024) 1✓- - 0.65 0.38
+Full OneDP-D ICML’25 (Wang et al., 2025) 1✓- - 0.78 0.71
+Full OneDP-S ICML’25 (Wang et al., 2025) 1✓- - 0.770.72
+Simplified Dataset (100 trajectories)
+Simplified DPPO ICLR’25 (Ren et al., 2025) 20✗1.00 1.00 0.78 0.80
+Simplified ReFlow-R NeurIPS’25 (Zhang et al., 2025b) 20✗1.00 0.99 0.80 -
+Simplified ReFlow-S NeurIPS’25 (Zhang et al., 2025b) 4✗1.00 0.99 - 0.85
+Simplified MP1 † AAAI’26 (Sheng et al., 2026) 1✗0.95 0.80 0.35 0.38
+Simplified DMPO (Ours) - 1 ✗ 1.00 1.00 0.83 0.88
+†The original MP1 uses 3D point cloud input, which is not directly applicable to RoboMimic’s 2D image observations. Our MP1 results
+are reproduced using MeanFlow with our lightweight architecture and 2D image input for fair comparison. MP1 is the only other
+MeanFlow-based one-step method, making it the most direct comparison; deploying multi-step methods on real robots incurs significant
+latency unsuitable for real-time control. Results for DP-C, DP-T, CP, and OneDP are sourced from (Wang et al., 2025).
+11
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Comparison with One-Step Generation Methods.Beyond baseline comparisons, we also compare with recent state-of-
+the-art one-step generation methods, including OneDP (Wang et al., 2025) and Consistency Policy (Prasad et al., 2024).
+These methods are distilled from multi-step teacher models, so we also include their teacher models (DP-C, DP-T) for
+reference. As shown in Table 1, DMPO significantly outperforms both existing one-step generation methods and their
+teacher models. This result is consistent with our theoretical analysis: distilled student models rarely surpass their teachers
+in performance.
+Data Efficiency.Notably, Table 1 demonstrates that DMPO using only 1/3 of the official dataset (100 vs. 300 trajectories)
+can match or even exceed existing one-step generation methods trained on the full dataset. This advantage is particularly
+pronounced on complex tasks like Transport, where DMPO achieves 88% success rate compared to 72% for OneDP-S,
+highlighting our algorithm’s superior data utilization efficiency.
+Note on Baselines.The results for one-step generation baselines (DP-C, DP-T, CP, OneDP) on the full dataset are sourced
+from (Wang et al., 2025).
+Comparison with MP1.MP1 (Sheng et al., 2026) is a concurrent work that also explores mean-prediction-based one-step
+generation. As shown in Table 1, while MP1 achieves reasonable performance on simpler tasks with 95% on Lift and
+80% on Can, it struggles significantly on complex manipulation tasks with only 35% on Square and 38% on Transport. In
+contrast, DMPO substantially outperforms MP1 across all tasks, achieving perfect 100% success rates on Lift and Can, while
+dramatically improving Square from 35% to 83% and Transport from 38% to 88%. This performance gap highlights the
+importance of our dispersive regularization in preventing representation collapse, enabling DMPO to maintain high-quality
+generation even for complex multi-modal action distributions.
+A.1.2. MODELARCHITECTURE ANDEFFICIENCYCOMPARISON
+Table 2 compares model architectures and computational efficiency across different policy learning methods. The first six
+columns describe model configurations: vision encoder type, action network architecture, parameter count, checkpoint
+size, and input modality. The last six columns report inference performance on RTX 4090 and RTX 2080 GPUs, including
+inference time, control frequency, and speedup relative to Diffusion Policy with DDPM sampling at 100 steps.
+Table 2.Model Architecture and Efficiency Comparison.Comparison of model configurations and inference performance across
+different policy learning methods: DP (Diffusion Policy (Chi et al., 2023)), CP (Consistency Policy (Prasad et al., 2024)), ReFlow and
+ShortCut (Zhang et al., 2025b), and MP1 (Sheng et al., 2026). Speedup is computed relative to DP-DDPM (100 steps). All measurements
+are performed with batch size 1. Note: OneDP (Wang et al., 2025) and 2-DP (Clemente et al., 2025) are not included as their code is not
+publicly available, preventing accurate inference time measurements.
+NVIDIA RTX 4090 NVIDIA RTX 2080
+Model Vision Action Params Size Steps Time Freq Speedup Time Freq Speedup
+DP ResNet-18×2 UNet 281.19M∼4.4GB
+100 (DDPM) 391.1ms 2.6Hz 1×2007.5ms 0.5Hz 1×
+16 (DDIM) 63.7ms 15.7Hz 6×385.3ms 2.6Hz 5×
+10 (DDIM) 40.3ms 24.8Hz 10×220.4ms 4.5Hz 9×
+CP ResNet-18×2 UNet 284.86M∼4.4GB 1 5.4ms 187Hz 73×35.5ms 28Hz 56×
+ReFlow light ViT MLP 1.78M∼28MB 20 8.4ms 119Hz 46×47.7ms 21Hz 42×
+ShortCut light ViT MLP 1.78M∼28MB 5 2.5ms 396Hz 155×12.0ms 83Hz 167×
+MP1 PointNet UNet 255.80M∼4GB
+1 4.1ms 244Hz 96×21.4ms 47Hz 94×
+2 7.7ms 130Hz 51×41.6ms 24Hz 48×
+5 18.6ms 54Hz 21×102.1ms 10Hz 20×
+DMPO
+(Ours) light ViT MLP 1.78M∼28MB
+1 0.6ms 1770Hz 694×2.6ms 385Hz 772×
+2 1.1ms 946Hz 371×4.9ms 204Hz 410×
+5 2.6ms 386Hz 151×12.0ms 83Hz 167×
+Table 2 compares model configurations and inference performance across different methods. The first five columns describe
+model configurations: vision encoder type, action network architecture, parameter count, and checkpoint size. The last
+six columns report inference performance on RTX 4090 (for simulation) and RTX 2080 (for physical robot deployment),
+including inference time, control frequency, and speedup relative to DP-DDPM with 100 steps.
+The results reveal that DMPO’s fast inference speed is determined by two factors. First, the lightweight model architecture.
+UNet-based methods such as DP, CP, and MP1 contain 255–285M parameters, while light ViT+MLP methods such as
+12
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+ReFlow, ShortCut, and DMPO use only 1.78M parameters. Comparing CP with DMPO under single-step inference on
+RTX 4090, CP requires 5.4ms while DMPO requires only 0.6ms, demonstrating that the lightweight architecture provides
+approximately 10× speedup. Second, the reduced number of inference steps. Comparing DP-DDIM at 10 steps with DMPO
+at 1 step, the inference time decreases from 40.3ms to 2.6ms, showing that one-step generation provides approximately 10×
+additional speedup. The combination of these two factors enables DMPO to achieve 694× speedup on RTX 4090 and 772×
+speedup on RTX 2080, reaching 1770 Hz and 385 Hz control frequency respectively. The compact 28MB model size also
+facilitates deployment on resource-constrained robotic platforms.
+A.1.3. HOLISTICRADARCOMPARISON
+Figure 8 presents a qualitative comparison using radar charts across eight evaluation dimensions: Inference Speed, Model
+Lightweight, Success Rate, Data Efficiency, Representation Quality, Distillation Free, Beyond Demos, and Training Stability.
+Each dimension is scored on a 1–5 scale, where 5 indicates excellent performance. We compare DMPO against RL
+fine-tuning methods including ReinFlow (Zhang et al., 2025b), DPPO (Ren et al., 2025), and πRL (Chen et al., 2025b),
+as well as generation methods including Diffusion Policy (DP) (Chi et al., 2023), Flow Policy (FP) (Zhang et al., 2025a),
+1-DP (Wang et al., 2025), MP1 (Sheng et al., 2026), and Consistency Policy (CP) (Prasad et al., 2024).
+Inference
+Speed
+Model
+Lightweight
+Success
+Rate
+Data
+Efficiency
+Representation
+Quality
+Distillation
+Free
+Beyond
+Demos
+Training
+Stability
+1
+2
+3
+4
+5
+DMPO (Ours)
+ReinFlow
+DPPO
+RL
+Inference
+Speed
+Model
+Lightweight
+Success
+Rate
+Data
+Efficiency
+Representation
+Quality
+Distillation
+Free
+Beyond
+Demos
+Training
+Stability
+1
+2
+3
+4
+5
+DMPO (Ours)
+Flow Policy (FP)
+Diffusion Policy (DP)
+1-DP
+MP1
+CP
+(a) RL Fine-tuning Methods (b) Generation Methods
+Figure 8.Holistic radar comparison across eight dimensions. (a)RL fine-tuning methods: DMPO forms the outer envelope, achieving
+top scores across all dimensions. While ReinFlow and DPPO share the same lightweight architecture and data efficiency as DMPO,
+they require multi-step inference and show lower representation quality.(b)Generation methods: DMPO outperforms all baselines by
+combining one-step inference with lightweight architecture, high data efficiency, and the ability to go beyond demonstrations through RL
+fine-tuning.
+RL Fine-tuning Methods (Panel a).All RL methods share the ability to surpass demonstrations and remain distillation-free.
+ReinFlow and DPPO use the same lightweight light ViT+MLP architecture as DMPO with equivalent data efficiency, yet
+they remain limited by multi-step sampling requirements of 20 and more steps respectively. The πRL method uses a heavier
+model architecture with lower data efficiency. Only DMPO achieves top scores across all eight dimensions by combining
+the lightweight architecture with one-step inference capability enabled by our dispersive MeanFlow formulation.
+Generation Methods (Panel b).The comparison reveals clear trade-offs among existing methods. Multi-step baselines such
+as DP and FP achieve moderate success rates with stable training, but suffer from slow inference speed and heavy model
+architectures. Distilled one-step methods including 1-DP and CP accelerate inference but rely on teacher models and cannot
+surpass demonstration performance. Teacher-free one-step methods like MP1 bypass distillation but suffer from severe
+representation collapse and use heavy architectures. DMPO stands as the only method achieving top performance across
+all eight dimensions, demonstrating that our approach successfully resolves the efficiency-stability-adaptability trilemma
+through the combination of lightweight architecture and advanced algorithm design.
+13
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+A.2. Stage 1: Pre-training Results
+A.2.1. STAGE1: GYMPRE-TRAININGRESULTS
+Table overview.Table 3 presents pre-training results on OpenAI Gym locomotion tasks including Hopper, Walker2d,
+Ant, and Humanoid, as well as Franka Kitchen manipulation tasks. For locomotion tasks, we report episode reward, and
+for Kitchen tasks, we report task completion rate. The table compares DMPO against two baselines from the ReinFlow
+paper (Zhang et al., 2025b): ReFlow, which uses standard rectified flow, and ShortCut, which uses a reflow-based shortcut
+model. All baseline results are taken directly from the ReinFlow paper’s open-source data, ensuring fair comparison under
+identical evaluation protocols. Each row presents a method’s performance across varying inference step counts from 1 to 64
+steps, with bold values denoting the best result per step count. The “Impr.” columns show DMPO’s relative improvement
+over ShortCut, with green indicating improvement and red indicating degradation. We include two DMPO variants for
+ablation: yellow-highlighted rows indicate DMPO without dispersive regularization, while blue-highlighted rows indicate
+our full method.
+Table 3.Stage 1 (Pre-training):Performance comparison of DMPO vs ReinFlow (ReFlow and ShortCut). Locomotion tasks report
+episode reward, and Kitchen tasks report task completion rate. Best result per task isbolded. Green/red Impr. columns show relative
+improvement over ReFlow at each denoising step.
+Task Method 1 Impr. 2 Impr. 4 Impr. 8 Impr. 16 Impr. 32 Impr. 64 Impr.
+Locomotion Tasks (Episode Reward)
+Hopper
+ReFlow 1192.6 - 932.4 - 1592.7- 1584.3- 1479.1 - 1451.1- 1389.3 -
+ShortCut 1095.3 -8% 1253.0 +34% 1400.1 -12% 1417.9 -11% 1458.3 -1% 1389.3 -4% 1395.5 0%
+DMPO w/o disp. 1332.7 +12% 1417.6 +52% 1465.2 -8% 1453.0 -8% 1440.9 -3% 1402.9 -3% 1393.5 0%
+DMPO (Ours) 1364.1 +14% 1484.8 +59% 1520.3 -5% 1538.5 -3% 1503.9 +2% 1414.2 -3% 1429.1 +3%
+Walker2d
+ReFlow 2805.8 - 2810.2 - 2508.4 - 2895.9- 2944.3 - 2839.7 - 2728.1 -
+ShortCut 2846.5+1% 2847.4 +1% 2987.3+19% 2732.5 -6% 2622.2 -11% 2667.8 -6% 2441.4 -11%
+DMPO w/o disp. 2509.8 -11% 2619.0 -7% 2913.9 +16% 2997.6 +4% 2959.7 +1% 2860.3 +1% 3154.6 +16%
+DMPO (Ours) 2606.0 -7% 3033.0 +8% 2777.2 +11% 2831.3 -2% 2953.5 0% 3044.8 +7% 2954.4 +8%
+Ant†
+ReFlow 894.9 - -40.3 - 495.8 - 654.4 - 709.9 - 761.3 - 771.4 -
+ShortCut 847.4 -5% 779.4 - 685.0 +38% 642.3 -2% 556.2 -22% 544.4 -28% 511.1 -34%
+DMPO w/o disp. 2924.6 +227% 2804.0 - 3355.1 +577% 3302.8 +405% 3427.2 +383% 3434.7 +351% 3371.6 +337%
+DMPO (Ours) 2929.8 +227% 2906.6 - 3289.7 +564% 3377.5 +416% 3352.7 +372% 3267.2 +329% 3536.1 +358%
+Humanoid
+ReFlow 1655.1 - 1256.7 - 1765.7 - 2106.2 - 2196.2 - 2157.9 - 2156.6 -
+ShortCut 1457.2 -12% 2394.5 +91% 2371.0 +34% 2096.1 0% 2051.0 -7% 1987.9 -8% 2128.5 -1%
+DMPO w/o disp. 2671.6 +61% 3044.0 +142% 3410.4 +93% 3435.5 +63% 3265.9 +49% 2986.2 +38% 2997.0 +39%
+DMPO (Ours) 2588.7 +56% 2809.8 +124% 3070.5 +74% 3235.6 +54% 2928.0 +33% 2823.5 +31% 3097.5 +44%
+Kitchen Tasks (Task Completion Rate, %)
+Kitchen-
+Complete
+ReFlow 0% - 2.5% - 20.0% - 50.0% - 70.0% - 75.0%- 77.5%-
+ShortCut 35.0% - 42.5% +1600% 70.0% +250% 75.0%+50% 75.0%+7% 75.0%0% 77.5%0%
+DMPO w/o disp. 55.0% - 72.5% +2800% 72.5% +263% 67.5% +35% 70.0% 0% 67.5% -10% 65.0% -16%
+DMPO (Ours) 52.5% - 70.0% +2700% 75.0% +275% 70.0% +40% 70.0% 0% 70.0% -7% 70.0% -10%
+Kitchen-
+Partial
+ReFlow 0% - 5.0% - 20.0% - 37.5% - 35.0% - 37.5% - 35.0% -
+ShortCut 37.5%- 37.5% +650% 37.5% +88% 37.5% 0% 35.0% 0% 35.0% -7% 37.5% +7%
+DMPO w/o disp. 35.0% - 35.0% +600% 37.5% +88% 35.0% -7% 35.0% 0% 32.5% -13% 35.0% 0%
+DMPO (Ours) 37.5% - 42.5% +750% 42.5% +113% 42.5% +13% 42.5% +21% 42.5% +13% 45.0% +29%
+Kitchen-
+Mixed
+ReFlow 0% - 2.5% - 20.0% - 40.0% - 42.5% - 47.5% - 45.0% -
+ShortCut 27.5%- 40.0% +1500% 42.5% +113% 40.0% 0% 40.0% -6% 40.0% -16% 37.5% -17%
+DMPO w/o disp. 25.0% - 37.5% +1400% 42.5% +113% 45.0% +13% 42.5% 0% 42.5% -11% 42.5% -6%
+DMPO (Ours) 27.5% - 42.5% +1600% 47.5% +138% 47.5% +19% 45.0% +6% 47.5% 0% 47.5% +6%
+† Different dataset versions: DMPO uses ant-medium-expert-v2, ReinFlow uses ant-medium-expert-v0.
+Key findings.The results demonstrate two main conclusions: (1)DMPO outperforms baseline methods, particularly in few-
+step inference scenarios. Across most tasks, DMPO achieves the best or comparable performance at 1-2 steps and maintains
+superior results at higher step counts. The improvement is especially pronounced on Humanoid and Kitchen-Complete tasks,
+where DMPO shows substantial gains over both ReFlow and ShortCut. (2)Dispersive regularization improves performance.
+14
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Comparing DMPO (Ours) against DMPO w/o disp., the full method consistently achieves better results, confirming that
+dispersive regularization prevents representation collapse and enables more stable generation quality. Note that the Ant task
+shows a large performance gap due to different dataset versions (see table footnote).
+A.2.2. STAGE1: TASKCOMPLEXITYANALYSIS OFROBOMIMIC TESKS
+Table and figure overview.Table 4 presents task complexity metrics and one-step generation success rates under three
+dispersive weight configurations (αdisp = 0.1,0.5,0.9 ). The “Steps” column shows average trajectory length from expert
+demonstrations. “Comp.” is the computed complexity score (range 0.1–1.0). “Diff.” indicates qualitative difficulty level. For
+each αdisp setting, we compare baseline methods (RF: ReFlow, SC: ShortCut) against our method (MF+Disp), with “Imp.”
+showing relative improvement over the best baseline. Figure 9 visualizes this data: the left panel plots task complexity against
+optimalα disp, while the right panel shows a heatmap of performance improvements across all task-weight combinations.
+Complexity definition.We define task complexity using a weighted combination of two factors: (1) trajectory length
+complexity Csteps, computed as the min-max normalized logarithm of average steps; and (2) baseline difficulty Crate,
+computed as the min-max normalized inverse of maximum baseline success rate. The final complexity score combines these
+with equal weighting and rescales to[0.1,1.0]:C final = 0.1 + 0.9×(0.5·C steps + 0.5·C rate).
+Key findings.Figure 13 shows that trajectory length reflects task complexity: simpler tasks like Lift exhibit concentrated
+distributions around shorter trajectories, while complex tasks like Transport show wider distributions with significantly
+longer average lengths. Table 4 further reveals that optimal dispersive weight varies with task complexity. Simpler tasks
+(Lift, Can) achieve best performance at moderate weights ( αdisp = 0.5), while more complex tasks (Square, Transport)
+benefit most from higher weights (αdisp = 0.9). Figure 9 quantifies this relationship with a Pearson correlation coefficient of
+r= 0.924, confirming that optimalα disp increases predictably with task complexity.
+Table 4.Stage 1 (Pre-training):Task complexity and performance improvement under different dispersive weights
+αdisp = 0.1 αdisp = 0.5 αdisp = 0.9
+Baseline Ours Baseline Ours Baseline Ours
+Task Steps Comp. Diff. RF SC MF+Disp Imp. RF SC MF+Disp Imp. RF SC MF+Disp Imp.
+Lift 108 0.100 Simplest 78.5% 84.0% 97.0% 19.5% 76.0% 86.5% 98.5% 21.7% 76.0% 86.5% 96.0% 18.7%
+Can 224 0.428 Medium 61.0% 62.5% 80.5% 30.4% 73.0% 47.5% 82.5% 43.4% 73.0% 47.5% 77.5% 34.7%
+Square 272 0.812 High 30.5% 33.5% 37.5% 17.5% 30.5% 36.5% 37.0% 11.3% 30.5% 36.5% 41.0% 23.4%
+Trans. 529 0.978 Highest 39.0% 34.0% 53.0% 45.9% 27.0% 21.0% 34.0% 43.9% 38.0% 21.0% 40.0% 47.9%
+0.2 0.4 0.6 0.8 1.0
+T ask Complexity (Weighted & Rescaled)
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Optimal Dispersive Weight ( * )
+Pearson r = 0.924
+Correlation: T ask Complexity vs. Optimal Weight
+Pearson r = 0.924
+Lift
+Can
+Square
+Transport
+0.1 0.5 0.9
+Dispersive Weight ( disp)
+Lift
+Can
+Square
+TransportT ask
+19.52 21.74 18.65
+30.39 43.35 34.66
+17.45 11.34 23.38
+45.89 43.92 47.87
+Performance Improvement under Dispersive Weights
+20
+30
+40
+Improvement (%)
+Figure 9.Stage 1 (Pre-training):Performance improvement analysis. Left: Correlation between task complexity and optimal dispersive
+weight. Right: Heatmap of performance improvement across tasks and weights.
+Practical implications.The consistent improvement across all αdisp values in the heatmap demonstrates that dispersive
+regularization is not hyperparameter-sensitive, and performance improves regardless of the specific value selected. As a
+practical guideline, we recommend larger αdisp for more complex tasks. This aligns with our theoretical analysis: complex
+tasks exhibit more diverse action distributions and thus require stronger representation capacity to avoid mode collapse
+during one-step generation.
+15
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+A.3. Stage 2: Fine-tuning Results
+A.3.1.WALL-CLOCK TIME OFGYMFINE-TUNING
+Wall-Clock Time Comparison.To provide a practical perspective on training efficiency, Figure 10 presents wall-clock time
+comparisons across six Gym tasks. The x-axis uses a non-linear power transformation to emphasize early training dynamics
+where differences are most pronounced. We compare DMPO with 1-step inference at NFE=1 and 2-step inference at NFE=2
+against baseline methods including FQL at NFE=1, DPPO at NFE=20, ReinFlow-R at NFE=4, and ReinFlow-S at NFE=4.
+The results demonstrate that DMPO achieves competitive or superior performance while requiring significantly less wall-
+clock time. On locomotion tasks including Hopper, Walker2d, Ant, and Humanoid, DMPO-1step converges faster than
+multi-step baselines, benefiting from reduced per-iteration inference cost. Notably, on the Kitchen tasks where success rate
+is measured, DMPO maintains strong performance with dramatically reduced training time compared to DPPO, which
+requires 20 denoising steps per action generation.
+0 5 10 15 20 25
+Wall-Clock Time (hours)
+(a) Hopper
+0
+1.5
+3.0Episode Reward
+×103
+0 10 20
+Wall-Clock Time (hours)
+(b) Walker2d
+0
+2
+4Episode Reward
+×103
+0 10 20
+Wall-Clock Time (hours)
+(c) Ant
+0
+1
+2
+3
+4Episode Reward
+×103
+0 2 4 6 8
+Wall-Clock Time (hours)
+(d) Humanoid
+0
+2
+4Episode Reward
+×103
+0 2 4 6 8
+Wall-Clock Time (hours)
+(e) Kitchen-Mixed
+0
+0.5
+1.0T ask Completion Rate
+0 2 4 6
+Wall-Clock Time (hours)
+(f) Kit.-Complete
+0
+0.5
+1.0T ask Completion Rate
+FQL (NFE=1)
+DPPO (NFE=20)
+ReinFlow-R (NFE=20)
+ReinFlow-S (NFE=4)
+DMPO (NFE=1)
+DMPO (NFE=2)
+Figure 10.Stage 2 (PPO Fine-tuning):Wall-clock time comparison across six Gym tasks. The x-axis shows training time in hours with
+non-linear scaling to emphasize early training dynamics. DMPO with 1-step and 2-step inference, i.e., NFE=1 and NFE=2, achieves
+competitive performance while requiring substantially less training time compared to multi-step baselines such as DPPO with NFE=20 and
+ReinFlow with NFE=4. The efficiency advantage is particularly pronounced on complex tasks like Humanoid and Kitchen environments.
+A.3.2. BEHAVIORCLONINGLOSSABLATION
+0 0.5 1.0 1.5 2.0 2.5
+(a) Square ×107
+0
+0.2
+0.5
+0.8
+1.0Success Rate
+w/o BC loss (run 1)
+w/o BC loss (run 2)
+w/o BC loss (run 3)
+DMPO (w/ BC loss)
+0 0.5 1.0 1.5 2.0 2.5
+(b) Transport ×107
+0
+0.2
+0.5
+0.8
+1.0Success Rate
+w/o BC loss (run 1)
+w/o BC loss (run 2)
+w/o BC loss (run 3)
+w/o BC loss (run 4)
+DMPO (w/ BC loss)
+Figure 11.BC Loss Ablation Study:Comparison of DMPO with BC loss regularization versus runs without BC loss on RoboMimic
+Square and Transport tasks. Without BC loss, the policy rapidly collapses, while BC regularization enables stable policy improvement.
+We further investigate the role of behavior cloning (BC) loss during RL fine-tuning on RoboMimic tasks. Figure 11 compares
+16
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+DMPO with BC loss regularization against multiple runs without BC loss on Square and Transport tasks. The results clearly
+demonstrate that BC loss is critical for stable policy improvement: without BC regularization, the success rate rapidly
+collapses to near zero across all runs, indicating that the policy deviates too far from the pretrained distribution and loses
+its learned behavior. In contrast, DMPO with proper BC loss maintains stable learning and achieves high success rates
+(83% on Square, 87.5% on Transport). This finding aligns with our practical recommendation of applying moderate BC
+regularization with decay during fine-tuning.
+A.4. Physical Robot Experiment Details
+Physical Robot Experiment DetailsWe deploy DMPO on a 7-DOF Franka-Emika-Panda robot equipped with a RealSense
+D435i wrist-mounted camera at 96×96×3 resolution using an NVIDIA RTX 2080 GPU. We compare DMPO against MP1
+(MeanFlow Pretrain 1-step without dispersive regularization) to evaluate the effectiveness of our approach. The policy
+network takes RGB images combined with 9-dimensional robot proprioceptive state including joint positions and gripper
+state as input, and outputs 7-dimensional actions representing end-effector delta pose, specifically 3D position and 3D
+orientation, plus gripper command.
+Table 5 presents the inference time breakdown for different methods on RTX 2080. Each column represents: Camera (image
+capture and preprocessing), State (robot state reading), Prep. (input tensor preparation), Inference (neural network forward
+pass), and Send (action transmission to robot). Notably, the camera preprocessing, which includes color space conversion
+and normalization operations, is currently executed on the CPU and constitutes the largest latency component (5.4ms).
+Migrating these operations to GPU can reduce the camera processing time to under 1ms, which would further improve the
+real-time performance of DMPO to approximately 5ms total latency.
+Table 5.Inference time breakdown (ms) for real robot deployment on RTX 2080.
+Method NFE Camera State Prep. Inference Send Total Freq (Hz)
+Reflow 20
+5.4 0.1 0.4
+47.7
+1.1
+54.7 18.3
+Shortcut 5 12.0 19.0 52.6
+DMPO 5 12.0 19.0 52.6
+DMPO 1 2.6 9.6 104.2
+Lift Can Square Transport
+T ask
+0
+20
+40
+60
+80
+100
+120Success Rate (%)
+100%
+74%
+35%
+28%
+100% 100%
+72%
+78%
+90%
+75%
+60% 62%
+DMPO Pre-training
+DMPO Fine-tuning
+DMPO Real World
+Figure 12.DMPO performance across RoboMimic tasks (NFE=1). We evaluate DMPO at three stages: pre-training, fine-tuning, and
+real-world deployment. Pre-training establishes baseline performance, fine-tuning significantly improves success rates across all tasks,
+and real-world experiments demonstrate successful sim-to-real transfer with competitive performance.
+Figure 12 summarizes DMPO’s success rates across four RoboMimic tasks at three stages: pre-training, fine-tuning, and
+real-world deployment. Pre-training with behavior cloning establishes baseline performance, achieving 100% on Lift,
+74% on Can, 35% on Square, and 28% on Transport. Fine-tuning with PPO significantly improves performance across all
+tasks, reaching 100% on both Lift and Can, 72% on Square, and 78% on Transport. Real-world deployment demonstrates
+successful sim-to-real transfer, with success rates of 90% (Lift), 75% (Can), 60% (Square), and 62% (Transport). These
+results validate that DMPO’s one-step policy maintains robust performance when deployed on physical hardware.
+17
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+B. Dataset Analysis and Visualization
+This section provides a comprehensive analysis and visualization of the datasets used in our experiments, addressing
+potential concerns about dataset choice and ensuring fair comparison with prior work.
+B.1. Dataset Selection and Distribution Analysis
+Our codebase is built directly upon DPPO (Ren et al., 2025) and ReinFlow (Zhang et al., 2025b). To ensure fair comparison
+with these flow-matching baselines, we use thesame simplified RoboMimic pixel datasetof approximately 1.9 GB
+released with these works, rather than the full-size RoboMimic image dataset of approximately 78 GB used in the original
+Diffusion Policy work (Chi et al., 2023). The simplified dataset is the standard benchmark adopted by ReinFlow at NeurIPS
+2025 and DPPO at ICLR 2025, ensuring that our performance gains are attributable to the proposed method rather than
+dataset differences.
+RoboMimic dataset analysis.Figure 13 compares three dataset variants: Official MH (300 trajectories from multiple
+humans), Official PH (200 trajectories from proficient humans), and Simple MH (100 trajectories). Panel (a) shows image
+dataset file sizes, where Transport exhibits the largest data volume with Official MH reaching 31.5GB, while Simple MH
+remains compact ranging from tens of MB to 1.4GB. Panels (c)–(f) present trajectory length distributions: Lift (c) is the
+simplest task with average lengths of 48–108 steps, while Transport (f) is the most complex with 469–653 steps. MH datasets
+exhibit higher variance from multiple demonstrators, PH datasets show lower variance and shorter trajectories, and Simple
+MH falls between them. This analysis validates our choice of Simple MH as it preserves essential task characteristics while
+maintaining manageable data volume, demonstrating the task complexity hierarchy: Lift<Can<Square<Transport.
+D4RL dataset analysis.Figure 14 presents distribution analysis for D4RL gymnasium and Kitchen tasks. Panel (a) shows
+that Gym locomotion tasks contain approximately 1 million samples each, while Kitchen tasks have fewer samples ranging
+from 3K to 130K. Panel (b) reveals that Gym tasks have 1000–2000 trajectories compared to only 19–613 for Kitchen tasks.
+Panel (c) displays episode return distributions, where ant-medium-expert achieves the highest returns with large variance,
+and Kitchen tasks show lower but more consistent returns. Panel (d) illustrates trajectory length distributions, with Gym
+tasks around 1000 steps and Kitchen tasks maintaining 200–280 steps. These visualizations demonstrate the diversity of the
+D4RL benchmark and the multi-modal nature of Kitchen tasks arising from different sub-task sequences.
+Lift Can Square Transport
+(a) Image Dataset File Size
+0
+5
+10
+15
+20
+25
+30
+35File Size (GB)
+2.5G
+5.1G 6.5G
+31.5G
+798M 1.9G 2.4G
+15.1G
+62M 262M 82M 1.4G
+Official Robomimic MH (300)
+Official Robomimic PH (200)
+Simple Robomimic MH (100)
+Lift Can Square Transport
+(b) Trajectory Count
+0
+50
+100
+150
+200
+250
+300
+350
+400
+450Number of Trajectories
+300 300 300 300
+200 200 200 200
+100 100 100 100
+Official Robomimic MH (300)
+Official Robomimic PH (200)
+Simple Robomimic MH (100)
+MH PH Simple MH
+(c) Lift
+0
+50
+100
+150
+200
+250
+300
+350Trajectory Length
+=104
+=44
+=48
+=6
+=108
+=61
+MH PH Simple MH
+(d) Can
+0
+200
+400
+600
+800
+1000
+1200 =209
+=114
+=116
+=14
+=224
+=149
+MH PH Simple MH
+(e) Square
+0
+200
+400
+600
+800
+1000
+1200 =269
+=123
+=151
+=20
+=272
+=162
+MH PH Simple MH
+(f) Transport
+0
+500
+1000
+1500
+2000
+2500
+3000 =653
+=201
+=469
+=54
+=529
+=98
+Figure 13.RoboMimic dataset analysis
+18
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+hopper
+medium
+v2
+walker2d
+medium
+v2
+halfcheetah
+medium
+v2
+ant
+medium
+expert
+v2
+kitchen
+complete
+v0
+kitchen
+partial
+v0
+kitchen
+mixed
+v0
+(a) Dataset Size
+0.00
+0.25
+0.50
+0.75
+1.00
+1.25
+1.50Number of Samples
+1e6
+999,906 999,762 999,762
+1,270,120
+3,680
+136,950 136,931
+hopper
+medium
+v2
+walker2d
+medium
+v2
+halfcheetah
+medium
+v2
+ant
+medium
+expert
+v2
+kitchen
+complete
+v0
+kitchen
+partial
+v0
+kitchen
+mixed
+v0
+(b) Trajectory Count
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+Number of Trajectories
+×103
+2,186
+1,187 1,187
+1,482
+19
+613 612
+hopper
+medium
+v2
+walker2d
+medium
+v2
+halfcheetah
+medium
+v2
+ant
+medium
+expert
+v2
+kitchen
+complete
+v0
+kitchen
+partial
+v0
+kitchen
+mixed
+v0
+(c) Episode Return Distribution
+0
+1
+2
+3
+4
+5Episode Return
+×103
+hopper
+medium
+v2
+walker2d
+medium
+v2
+halfcheetah
+medium
+v2
+ant
+medium
+expert
+v2
+kitchen
+complete
+v0
+kitchen
+partial
+v0
+kitchen
+mixed
+v0
+(d) Trajectory Length Distribution
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Trajectory Length
+×103
+Figure 14.D4RL dataset analysis
+C. Algorithm & Method Formulas
+This section presents the core algorithmic components of DMPO: the MeanFlow policy definition, training objectives,
+inference procedures, and fine-tuning losses.
+C.1. Stage 1: MeanFlow Pre-Training
+Stage 1 trains the MeanFlow policy on offline demonstration data using supervised learning. The goal is to learn a velocity
+networku θ that can transform noise into expert-like actions.
+Notation Adaptation from Original MeanFlow.To improve readability when combining flow matching with reinforcement
+learning, we adapt the original MeanFlow notation as shown in Table 6. Our design prioritizes clarity as follows:
+Primary priority:Distinguishing time-related symbols that are most easily confused, including denoising steps in generative
+models, continuous flow time, and RL environment time steps. Specifically, we replace the original MeanFlow flow timet
+withτto avoid conflict with the standard RL time stept.
+Secondary priority:For less critical symbols (flow interval start r and integration variable ξ), we retain r from the original
+MeanFlow and use ξ as the integration dummy variable (since τ is now occupied). In Stage 2, RL rewards are distinguished
+by the time subscript asr t.
+Table 6.Notation adaptation from original MeanFlow to avoid conflicts with RL symbols.
+Concept Original MeanFlow This Paper Reason
+Flow time (interval end)t τAvoid conflict with RL time stept
+Flow time (interval start)r rRetained (RL reward usesr t with subscript)
+Integration variableτ ξ τis now used for flow time endpoint
+Interpolated statez t zτ Consistent withτnotation
+Notation for Pre-Training.Table 7 summarizes the notation used throughout Stage 1.
+Time convention: τ= 0 corresponds to the target action (data), and τ= 1 corresponds to pure noise. This follows the
+MeanFlow convention where sampling proceeds fromτ= 1(noise) toτ= 0(action).
+19
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Table 7.Stage 1 (Pre-training) notation summary.
+Concept Symbol Description
+Flow time (end)τ∈[0,1]Interval endpoint for flow matching
+Flow time (start)r∈[0,1]Interval start,r < τ
+Observationo∈ OState from environment/dataset
+Actiona∈R da Target action from demonstrations
+Noiseϵ∼ N(0, I)Standard Gaussian noise
+Interpolated statez τ State at flow timeτ:z τ = (1−τ)a+τ ϵ
+Velocity networku θ Neural network predicting average velocity
+Network parametersθLearnable parameters
+Inference stepsKNumber of denoising iterations
+Flow Interpolation and Velocity Field.
+Flow matching constructs a continuous path from data to noise. Given a target action a∈R da sampled from the
+demonstration dataset and Gaussian noiseϵ∼ N(0, I), we define thelinear interpolation trajectory:
+zτ = (1−τ)a+τ ϵ, τ∈[0,1](10)
+where zτ ∈R da represents the intermediate state at flow time τ. At τ= 0 , we have z0 =a , corresponding to the target
+action. At τ= 1 , we have z1 =ϵ , corresponding to pure noise. The interpolation coefficient (1−τ) controls the action
+proportion whileτcontrols the noise proportion.
+Theinstantaneous velocity field v(zξ, ξ) :R da ×[0,1]→R da describes the rate of change along the flow trajectory at
+each point. Theaverage velocity fieldover interval[r, τ]with0≤r < τ≤1is defined as:
+u(zτ , r, τ) = 1
+τ−r
+Z τ
+r
+v(zξ, ξ)dξ(11)
+This average velocity represents the mean direction and magnitude of flow over the time interval [r, τ]. Importantly, it
+satisfies thedisplacement identity:
+(τ−r)u(z τ , r, τ) =z τ −z r (12)
+which states that integrating the average velocity over the interval exactly recovers the displacement between zr and zτ .
+This identity is crucial for MeanFlow’s ability to perform arbitrary-step inference: by predicting the average velocityu, we
+can directly compute the state transition without numerically integrating the instantaneous velocityv.
+Derivation of the MeanFlow Identity.We now derive the MeanFlow identity from the displacement identity. Define the
+cumulative displacement function:
+F(τ) =
+Z τ
+r
+v(zξ, ξ)dξ=z τ −z r (13)
+By the definition of average velocity in Eq. 11, we have:
+u(zτ , r, τ) = F(τ)
+τ−r (14)
+Differentiating with respect toτusing the quotient rule:
+d
+dτ u= F ′(τ)(τ−r)−F(τ)·1
+(τ−r) 2 (15)
+By the fundamental theorem of calculus,F ′(τ) =v(z τ , τ). Substituting and simplifying:
+d
+dτ u= v(zτ , τ)(τ−r)−F(τ)
+(τ−r) 2 = v(zτ , τ)
+τ−r − F(τ)
+(τ−r) 2
+= v(zτ , τ)
+τ−r − u
+τ−r = v(zτ , τ)−u
+τ−r (16)
+20
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Rearranging(τ−r) d
+dτ u=v(z τ , τ)−uyields theMeanFlow identity:
+u(zτ , r, τ) =v(z τ , τ)−(τ−r) d
+dτ u(zτ , r, τ)(17)
+This identity states that the average velocity equals the instantaneous velocity minus a correction term (τ−r) d
+dτ u that
+accounts for how the average velocity changes over time. When the average velocity is constant, the correction term vanishes
+andu=v.
+MeanFlow Training Objective.TheMeanFlow losstrains the network to predict the average velocity that transports noise
+to target actions:
+LMF(θ) =E (o,a)∼D, ϵ∼N(0,I),(r,τ)
+
+∥uθ(zτ , r, τ, o)−sg(u tgt)∥2
+(18)
+where sg(·) denotes thestop-gradientoperator that treats its argument as a constant during backpropagation (Chen & He,
+2021), D={(o i, ai)}N
+i=1 is the offline demonstration dataset, (r, τ) are randomly sampled time interval endpoints with
+0≤r < τ≤1 , and zτ = (1−τ)a+τ ϵ is the interpolated state (Eq. 10). The network uθ(zτ , r, τ, o) predicts the average
+velocity over interval[r, τ], andu tgt is thetarget velocityderived from the MeanFlow identity.
+Computing the Target Velocity.Applying the MeanFlow identity (Eq. 17) to training requires computing the total derivative
+d
+dτ uθ. For linear interpolation, the instantaneous velocity is constant: vτ =ϵ−a . Since uθ(zτ , r, τ, o) depends on τ both
+explicitly and implicitly throughz τ = (1−τ)a+τ ϵ, we apply the multivariate chain rule:
+d
+dτ uθ(zτ , r, τ, o) = dzτ
+dτ ·∂ zuθ + dr
+dτ ·∂ ruθ + dτ
+dτ ·∂ τ uθ (19)
+Substituting dzτ
+dτ =v τ =ϵ−a, dr
+dτ = 0(sinceris fixed after sampling), and dτ
+dτ = 1:
+d
+dτ uθ(zτ , r, τ, o) =v τ · ∇zuθ +∂ τ uθ (20)
+This is the Jacobian-vector product (JVP) between the Jacobian [∂zuθ, ∂ruθ, ∂τ uθ] and the tangent vector (vτ ,0,1) for
+inputs(z τ , r, τ). Substituting into Eq. 17, the target velocity is:
+utgt =v τ −(τ−r) d
+dτ uθ = (ϵ−a)−(τ−r) (v τ · ∇zuθ +∂ τ uθ)(21)
+Note that utgt depends on the current network uθ, making this aself-consistenttraining objective. The stop-gradient operator
+sg(·) in Eq. 18 is essential: it treats utgt as a fixed target during backpropagation, preventing unstable gradient flow through
+the JVP term. This is analogous to target networks in DQN or the stop-gradient mechanism in SimSiam (Chen & He, 2021).
+Once trained, the network enablesone-step generation: given noise z1 ∼ N(0, I) , we directly compute the action as
+a=z 1 −u θ(z1, r=0, τ=1, o).
+For time sampling, we use alogit-normal distributionwith τ, r=sort(sigmoid(ξ 1),sigmoid(ξ 2)) where ξ1, ξ2 ∼ N(0,1) ,
+which concentrates samples in the middle of [0,1] and avoids boundary effects. A small fraction (ρ= 0.1 ) of samples set
+r=τto provide supervision for instantaneous velocity prediction.
+C.2. Stage 1: MeanFlow Pre-Training with Dispersive Regularization
+We introducedispersive regularizationto preventrepresentation collapse, the phenomenon where the encoder maps
+distinct observations to nearly identical representations (Wang & He, 2025). Dispersive regularization is particularly
+important forone-step generation models, where the network must directly map noise to diverse actions without iterative
+refinement. The core idea, analogous to contrastive self-supervised learning, is to encourage internal representations to
+disperse in the hidden space, but without requiring positive sample pairs.
+Plug-and-play property: Dispersive regularization is a training-time-only technique. It adds a regularization term to
+the loss function during pre-training, butrequires no modifications during inference. Once training is complete, the
+regularization term is discarded, and the model performs standard MeanFlow sampling. This makes it easy to integrate into
+existing pipelines without affecting inference speed or architecture.
+21
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Notation.Let B denote the batch size and {oi}B
+i=1 a batch of observations. We extract intermediate representations
+from a chosen layer of the velocity network uθ. Following Wang & He (2025), let hi =f θ(oi)∈R dh denote the
+flattened intermediate activation for observation oi, where fθ represents the subset of layers up to the chosen intermediate
+block. Each observation produces one representation vector, and we collect them into the batch representation matrix
+H= [h 1, . . . , hB]⊤ ∈R B×dh. The temperature hyperparameter τ >0 (typically τ= 0.1 ) controls the sharpness of the
+dispersive loss.
+We provide four variants of dispersive regularization:
+InfoNCE-L2 Loss.Encourages representations to be far apart in Euclidean distance:
+LNCE-L2 =− 1
+B
+BX
+i=1
+log exp(∥hi∥2
+2/τ)P
+j̸=i exp(−∥hi −h j∥2
+2/τ) (22)
+The numerator exp(∥hi∥2
+2/τ) encourages large representation norms, while the denominator penalizes small pairwise
+distances∥h i −h j∥2
+2. Minimizing this loss pushes representations apart.
+InfoNCE-Cosine Loss.Encourages representations to have diverse directions (angular separation):
+LNCE-Cos =− 1
+B
+BX
+i=1
+log exp(1/τ)P
+j̸=i exp(simcos(hi, hj)/τ) (23)
+where thecosine similaritybetween two vectors is:
+simcos(hi, hj) = h⊤
+i hj
+∥hi∥2 · ∥hj∥2
+∈[−1,1]
+The constant numerator exp(1/τ) serves as a reference. Minimizing the loss reduces cosine similarities between all pairs,
+spreading representations uniformly on the hypersphere.
+Hinge Loss.Directly penalizes pairs that are closer than a marginm:
+LHinge = 1
+B(B−1)
+BX
+i=1
+X
+j̸=i
+max(0, m− ∥h i −h j∥2)(24)
+where m >0 is the margin hyperparameter, typically m= 1.0 , representing the minimum desired distance between any
+two representations, max(0,·) is the hinge function that only penalizes pairs closer than m, and B(B−1) is the number of
+ordered pairs used for normalization.
+Covariance Regularization.Encourages the covariance matrix of representations to be diagonal with decorrelated
+features:
+LCov = 1
+dh
+dhX
+i=1
+X
+j̸=i
+[C(H)] 2
+ij (25)
+where thesample covariance matrixis:
+C(H) = 1
+B−1 (H− ¯H)⊤(H− ¯H)∈R dh×dh
+with ¯H= 1
+B
+PB
+i=1 hi being the batch mean broadcast to all rows. The loss penalizes off-diagonal entries [C(H)] ij for
+i̸=j, encouraging feature dimensions to be uncorrelated.
+Combined Stage 1 Objective.The total Stage 1 training loss combines MeanFlow reconstruction with dispersive
+regularization:
+LStage1 =L MF +α dispLdisp(H(Cond)) (26)
+22
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+where LMF is the MeanFlow velocity prediction loss in Eq. 18, Ldisp ∈ {L NCE-L2,L NCE-Cos,L Hinge,L Cov} is the chosen
+dispersive regularization applied to the conditional embedding H(Cond) output by the Vision Transformer encoder, and
+αdisp >0 is the weight balancing reconstruction accuracy vs. representation diversity with typical value αdisp = 0.1 .
+DMPO uses InfoNCE-L2 loss by default, as it achieves the best performance both in the original dispersive regularization
+study (Wang & He, 2025) and in our experiments on robotic manipulation tasks.
+Inference Procedures.A key advantage of MeanFlow is that thesame trained network uθ supports arbitrary inference
+steps K∈ {1,5,32,128, . . .} without retraining. This flexibility arises because uθ(zτ , r, τ, o) is trained to predict the
+average velocity over any interval [r, τ], where τ denotes the interval end and r denotes the interval start, rather than a fixed
+discretization. At deployment time, we can choose K based on the available computational budget and required action
+quality.
+Given any step budgetK≥1, we partition the unit time interval[0,1]intoKequal segments. Define thetime schedule:
+1 =τ 0 > τ 1 > τ 2 >· · ·> τ K = 0,whereτ k = 1− k
+K
+Themulti-step inferenceiteratively refines the state from noise to action:
+zτk+1 =z τk −(τ k −τ k+1)u θ(zτk , τk+1, τk, o), k= 0, . . . , K−1(27)
+where zτ0 =z 1 ∼ N(0, I) is the initial sample from standard Gaussian representing pure noise at τ= 1 , zτk ∈R da
+is the intermediate state at step k, (τk −τ k+1) = 1/K is the time step size, uθ(zτk , τk+1, τk, o) is the predicted average
+velocity for interval [τk+1, τk] with the first time argument being the interval start and the second being the interval end, and
+a=z τK =z 0 is the final action afterKdenoising steps.
+Note on time direction: In flow matching, we construct trajectories from data at τ= 0 to noise at τ= 1 during training
+(i.e., zτ = (1−τ)a+τ ϵ ). During inference, we reverse this: starting from τ= 1 corresponding to noise and integrating
+toward τ= 0 corresponding to the target action. The update subtracts (τk −τ k+1)·u θ from the current state to move toward
+the target.
+One-Step Inference (K= 1).The special caseK= 1collapses the entire denoising process into asingle forward pass:
+apred =z 1 −u θ(z1, r=0, τ=1, o), z 1 ∼ N(0, I)(28)
+where z1 ∼ N(0, I) is the sampled noise serving as the starting point, uθ(z1, r=0, τ=1, o) is the predicted average velocity
+over the entire interval [0,1] with τ= 1 as interval end and r= 0 as interval start, and apred ∈R da is the predicted action in
+one step.
+This formulation eliminates iterative ODE integration entirely, enabling real-time control at 90Hz or higher. The network
+directly outputs the full displacement from noise to action, making inference as fast as a standard feedforward network.
+Trade-off: One-step inference is fastest but may sacrifice some action quality compared to multi-step inference, especially
+for complex action distributions. The dispersive regularization described in Section C.1 is particularly important for
+maintaining quality under one-step inference.
+C.3. Stage 2: PPO Fine-Tuning
+Notation for RL Fine-Tuning.To avoid confusion between environment time steps and flow time, we adopt the following
+notation convention: t denotes discrete environment time steps, while τ denotes continuous flow time. This distinction is
+consistent with ReinFlow (Zhang et al., 2025b).Symbol disambiguation:The letter r is used for two distinct concepts: (1)
+flow interval start r or rk in Stage 1 and the denoising chain, and (2) environment reward rt. These are distinguished by
+context and subscript: r without subscript or with denoising index k refers to flow time, while rt with environment time
+subscripttrefers to reward. Table 8 summarizes the notation used in Stage 2.
+Time convention (consistent with Stage 1):The flow time convention remains the same as in Stage 1: τ= 0 corresponds
+to the target action (data), and τ= 1 corresponds to pure noise. In the discrete setting, τ0 = 1 (noise) and τK = 0 (action).
+Therefore, the denoising chain starts froma 0 ∼ N(0, I)atτ 0 = 1and ends at the final actiona K atτ K = 0.
+Relation to Stage 1 notation:In Stage 1 (pre-training), we use continuous flow time τ∈[0,1] and interval start r, with
+interpolated state zτ = (1−τ)a+τ ϵ . In Stage 2, the flow time is discretized as τk = 1−k/K for denoising step k, with
+23
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Table 8.Stage 2 (RL Fine-tuning) notation summary.
+Concept Symbol Description
+Environment time steptStep index within an episode
+Denoising stepk(superscript) Step index in the denoising chain
+Flow time (end)τ k = 1−k/KInterval endpoint at stepk
+Flow time (start)r k =τ k+1 Interval start at stepk
+Training iterationnPPO iteration index
+Observationo t Observation at environment stept
+Final actiona t Action executed at stept
+Intermediate actiona k
+t Action at denoising stepk
+Rewardr t Reward at environment stept
+PPO probability ratioρ t(θ)Ratio of new to old policy
+intermediate action ak corresponding to zτk. The interval [r, τ] in Stage 1 corresponds to [τk+1, τk] in Stage 2. Within each
+environment stept, the denoising chain operates with fixed observationo=o t.
+Stage 2 fine-tunes the pre-trained MeanFlow policy using online reinforcement learning. We employ Proximal Policy
+Optimization (PPO), which provides stable policy updates through a clipped surrogate objective. To enable PPO training,
+we first formulate the multi-step denoising process as a Markov chain with tractable log-probabilities.
+Multi-Step Markov Policy.MeanFlow formulates action generation as a K-step Markov chain, enabling tractable
+probability computation for policy gradient methods. Within a single environment step t, the observation o=o t remains
+fixed during the entire denoising chain. For notational simplicity, we omit the subscripttin the following derivations.
+Definition C.1(Multi-Step Markov Policy).Given an observation o (i.e., ot at environment step t), MeanFlow generates
+actions via aK-step denoising process:
+a0 ∼p 0(·) =N(0, I), a k+1 ∼π θ(ak+1|ak, o), k= 0, . . . , K−1(29)
+where a0 ∈R da is the initial sample from the prior distribution p0 =N(0, I) , ak ∈R da denotes the intermediate action
+at step k that is progressively refined from noise toward the final action, πθ(ak+1|ak, o) is the learned transition kernel
+parameterized by θ, and K∈N + is the total number of denoising steps such as 1, 5, 32, etc. The final action executed in the
+environment isa:=a K.
+Each transition in the Markov chain follows a Gaussian distribution centered at the deterministic update:
+ak+1 ∼ N
+
+ak −∆τ k ·u θ(ak, τk+1, τk, o), σ 2I
+
+(30)
+where τk = 1−k/K is the flow time at step k decreasing from τ0 = 1 to τK = 0, ∆τk =τ k −τ k+1 = 1/K is the time
+step size under uniform partition, uθ(ak, τk+1, τk, o) is the neural network predicting the average velocity over interval
+[τk+1, τk] conditioned on current state ak and observation o (with the first time argument τk+1 being the interval start and
+the second τk being the interval end), and σ2 >0 is the variance of the transition noise, a small hyperparameter typically set
+toσ= 0.01that ensures the policy has full support for exploration.
+Thejoint log-probabilityof the entire trajectorya 0:K = (a0, a1, . . . , aK)factorizes as:
+lnπ θ(a0:K |o) = lnp 0(a0) +
+K−1X
+k=0
+lnN
+
+ak+1 |µ k, σ 2I
+
+(31)
+where µk =a k −∆τ k ·u θ(ak, τk+1, τk, o) is the predicted mean. Each Gaussian log-probability term has the closed form:
+lnN(x|µ, σ 2I) =− da
+2 ln(2πσ 2)− ∥x−µ∥ 2
+2
+2σ2
+This tractable log-probability enables direct application of policy gradient algorithms like PPO.
+24
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Standard RL notation: Let γ∈[0,1) denote the discount factor for future rewards with typical value γ= 0.99 , and
+J(π θ) =E πθ[P∞
+t=0 γtrt] the expected cumulative discounted return. The state value function V π(o) =E π[P∞
+t=0 γtrt |
+o0 =o] estimates expected return from state o, while the state-action value function Qπ(o, a) =E π[P∞
+t=0 γtrt |o 0 =
+o, a0 =a] estimates expected return after taking action a in state o. The advantage function Aπ(o, a) =Q π(o, a)−V π(o)
+measures how much better actionais compared to the average.
+Policy Gradient for Multi-Step Policies.For MeanFlow’s multi-step action generation, we derive a policy gradient that
+credits the final action’s advantage to all intermediate denoising steps.
+Theorem C.2(Multi-Step Policy Gradient).Let πθ be a MeanFlow policy generating actions via K-step Markov chain as
+defined in Eq. 29. The policy gradient is:
+∇θJ(π θ) =E o, a0:K ∼πθ
+"
+Aπθ(o, aK)∇θ
+K−1X
+k=0
+lnπ θ(ak+1|ak, o)
+#
+(32)
+where o is an observation sampled during policy rollouts,a0:K = (a0, a1, . . . , aK)∼π θ(·|o) is the full denoising trajectory
+sampled from the policy, Aπθ(o, aK) is the advantage of thefinal action aK which is the action actually executed in the
+environment, andPK−1
+k=0 lnπ θ(ak+1|ak, o)is the sum of log-probabilities for allKtransitions.
+Key insight: The advantage A(o, aK) computed from the environment reward for thefinal actionis used to updateall
+intermediate transition probabilities. This is valid because all transitions contribute to producing the final action: if aK
+yields high reward, we should reinforce the entire denoising chain that produced it.
+PPO Clipped Surrogate Objective.PPO stabilizes policy updates by limiting the change in action probabilities. Define the
+probability ratio:
+ρt(θ) = πθ(at |o t)
+πθold(at |o t) = exp
+
+logπ θ(at |o t)−logπ θold(at |o t)
+
+(33)
+where πθ is the current policy being optimized,πθold is the policy used to collect the training data (frozen during optimization),
+anda t, ot are the action and observation at environment steptfrom the collected trajectories.
+Theclipped surrogate policy lossprevents excessively large policy updates:
+LPG(θ) =E t
+
+max
+
+−At ·ρ t(θ),−A t ·clip
+
+ρt(θ),1−ϵ clip,1 +ϵ clip
+
+(34)
+where At is the estimated advantage at environment step t computed using GAE as described below, ϵclip >0 is the clipping
+threshold with typical value ϵclip = 0.2, and clip(x, a, b) = min(max(x, a), b) clips x to the interval [a, b]. The max over
+the unclipped and clipped objectives ensures that the policy is only updated when it improves the objective, and large
+deviations fromπ θold are penalized.
+Generalized Advantage Estimation (GAE): We estimate advantages using GAE with parameter λGAE ∈[0,1] , typically
+λGAE = 0.95:
+ˆAt =
+∞X
+ℓ=0
+(γλGAE)ℓδt+ℓ,whereδ t =r t +γV θ(ot+1)−V θ(ot)
+is the TD residual. GAE provides a bias-variance trade-off controlled by λGAE. In practice, for a finite episode ending at
+stepT, this becomes:
+ˆAt =
+T−t−1X
+ℓ=0
+(γλGAE)ℓδt+ℓ
+which can be computed efficiently via backward recursion: ˆAT−1 =δ T−1 and ˆAt =δ t +γλ GAE ˆAt+1 fort < T−1.
+Value Function Loss.The value networkV θ :O →Restimates expected returns. We train it to minimize thevalue loss:
+LV (θ) = 1
+2 Et
+
+(Vθ(ot)−R t)2
+(35)
+25
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+where Vθ(ot)∈R is the predicted value for observation ot, Rt = PT−t
+ℓ=0 γℓrt+ℓ is the empirical return representing
+the discounted sum of rewards from environment step t to episode end T , and the factor 1
+2 simplifies the gradient to
+(Vθ(ot)−R t).
+Entropy Regularization.To encourage exploration and prevent premature convergence, we add anentropy bonus:
+Lent(θ) =−E t
+
+H
+
+πθ(· |o t)
+
+(36)
+where theentropyof the policy distribution is:
+H
+
+πθ(· |o)
+
+=−E a∼πθ(·|o)
+
+logπ θ(a|o)
+
+For MeanFlow, since each transition is Gaussian as defined in Eq. 30, the entropy has a closed form:
+H
+
+N(µ, σ 2I)
+
+= da
+2
+
+1 + log(2πσ2)
+
+MinimizingL ent, which has a negative sign,maximizesentropy, encouraging diverse action exploration.
+Behavior Cloning Regularization.To prevent the fine-tuned policy from deviating too far from the pre-trained expert
+behavior, we add abehavior cloningorBC loss:
+LBC(θ) =E o∼Drollout
+
+∥aω(o)−a θ(o)∥2
+2
+
+(37)
+where aω(o)∈R da is the action from thefrozen pre-trained policywith parameters ω that remain fixed during fine-tuning,
+aθ(o)∈R da is the action from thecurrent fine-tuned policywith parameters θ, and Drollout denotes observations collected
+during online rollouts. Both policies are evaluated usingidentical noise seedsz 1 to ensure the comparison is meaningful.
+The BC coefficient follows alinear decay scheduleto gradually reduce regularization as learning progresses:
+λBC(n) =
+
+
+
+λinit
+BC, n < n start
+λinit
+BC + n−n start
+nend −n start
+
+λfinal
+BC −λ init
+BC
+
+, n start ≤n < n end
+λfinal
+BC , n≥n end
+(38)
+where n is the current training iteration, λinit
+BC is the initial BC weight typically set to 1.0 for strong regularization early, λfinal
+BC
+is the final BC weight typically set to 0.0 to allow full RL optimization, and nstart, nend define the iteration range over which
+the decay occurs.
+Combined Stage 2 Objective.The total Stage 2 fine-tuning loss combines all components:
+LStage2(θ) =L PG(θ) +λ V · LV (θ) +λ ent · Lent(θ) +λ BC(n)· L BC(θ) (39)
+where LPG is the PPO clipped policy gradient loss in Eq. 34, LV is the value function MSE loss in Eq. 35, Lent is the
+negative entropy for exploration in Eq. 36, and LBC is the behavior cloning regularization in Eq. 37. The coefficients are
+λV >0 for value loss with typical value λV = 0.5, λent >0 for entropy with typical value λent = 0.01, and λBC(n) for the
+iteration-dependent BC coefficient in Eq. 38. The policy and value networks are updated jointly by minimizing LStage2 using
+gradient descent, typically with the Adam optimizer.
+Algorithm Pseudocode.
+26
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Algorithm 1DMPO Stage 1: Pre-Training with Dispersive Regularization
+Require:DatasetD={(o, a)}, dispersive weightα disp
+Ensure:Trained policy networkπ θ
+1:Initialize network parametersθ
+2:foreach epochdo
+3:foreach batchB={(o (i), a(i))}B
+i=1 do
+4:Sampleϵ (i) ∼ N(0, I)and(r (i), τ (i))from logit-normal
+5:Compute interpolants:z (i)
+τ = (1−τ (i))a(i) +τ (i)ϵ(i)
+6:Predict velocity:ˆu (i) =u θ(z(i)
+τ , r(i), τ (i), o(i))
+7:Compute target:u (i)
+tgt = (ϵ(i) −a (i))−(τ (i) −r (i)) d
+dτ uθ {via JVP, Eq. 21}
+8:Extract representations:h (i) =ϕ θ(o(i))
+9:L MF = 1
+B
+P
+i ∥ˆu(i) −sg(u (i)
+tgt )∥2
+2 {sg: stop-gradient}
+10:L disp =DispersiveLoss({h (i)})
+11:θ←θ−η∇ θ(LMF +α dispLdisp)
+12:end for
+13:end for
+Algorithm 2DMPO Inference (One-Step or Multi-Step)
+Require:Observationo, trained policyπ θ, number of stepsK
+Ensure:Actiona
+1:Samplez 1 ∼ N(0, I)
+2:ifK= 1then
+3:a=z 1 −u θ(z1,0,1, o){One-step:r=0,τ=1}
+4:else
+5:fork= 1toKdo
+6:τ k = 1−(k−1)/K,τ k+1 = 1−k/K
+7:z τk+1 =z τk −(τ k −τ k+1)·u θ(zτk , τk+1, τk, o)
+8:end for
+9:a=z 0
+10:end if
+Algorithm 3DMPO Stage 2: PPO Fine-Tuning
+Require:Pre-trained policyπ θ, environment, hyperparametersλ V , λent, λBC
+Ensure:Fine-tuned policyπ θ
+1:foriterationn= 1, . . . , N iter do
+2:Collect trajectories{(o t, a0:K
+t , rt)}using current policy withK-step sampling
+3:Compute GAE advantages{ ˆAt}and returns{R t}
+4:foreach PPO epochdo
+5:Compute probability ratio:ρ t(θ) = πθ(at|ot)
+πold(at|ot)
+6:Policy loss:L PG =E t[max(− ˆAtρt,− ˆAtclip(ρt,1±ϵ))]
+7:Value loss:L V = 1
+2 Et[(Vθ(ot)−R t)2]
+8:Entropy loss:L ent =−E t[H(π θ(· |o t))]
+9:BC loss:L BC =E t[∥aω(ot)−a θ(ot)∥2
+2]
+10:Update BC coefficient:λ BC(n)via linear decay schedule
+11:Total loss:L=L PG +λ V LV +λ entLent +λ BC(n)LBC
+12:Update:θ←θ−η∇ θL
+13:end for
+14:end for
+27
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+D. Theoretical Analysis and Unified Framework Design
+D.1. Theoretical Analysis of Dispersive Regularization
+This subsection provides a rigorous information-theoretic foundation for dispersive regularization, explaining why it
+effectively prevents representation collapse and improves one-step generation quality.
+Preliminaries and Notation.Let O denote the observation space and Z ⊆R d denote the representation space, where d is
+the representation dimensionality. The encoder fθ :O → Z maps observations to d-dimensional representation vectors.
+For a batch of B observations {oi}B
+i=1, we obtain the representation set H={h i =f θ(oi)}B
+i=1. We consider two random
+variables:
+•O: the observation random variable following data distributionp(o)
+•Z=f θ(O): the representation random variable with distribution induced by the encoder
+We use standard information-theoretic notation: I(X;Y) denotes the mutual information between random variables X and
+Y,H(X)denotes the Shannon entropy ofX, andH(X|Y)denotes the conditional entropy ofXgivenY.
+The Information Bottleneck Perspective.From the Information Bottleneck perspective, a good representation Z should
+satisfy:
+max
+fθ
+I(Z;A|O)s.t.I(Z;O)is maximized (40)
+where A is the target action. The first term requires the representation to contain information necessary for predicting
+actions, while the second term requires the representation to sufficiently encode observation information. In other words, a
+good representationZshould be a sufficient compression ofOwhile preserving all information needed to predictA.
+Key Observation:MeanFlow’s velocity prediction loss LMF only optimizes the first term (prediction accuracy) without
+explicit constraints on the second term (representation information content). This leaves room for representation collapse,
+where the model may learn a “shortcut” representation Z that achieves low prediction loss but discards critical observation
+information.
+Entropy Decomposition of Mutual Information.Mutual information can be decomposed as:
+I(Z;O) =H(Z)−H(Z|O)(41)
+where H(Z) =−E z∼p(z)[logp(z)] is the marginal entropy measuring the dispersion of the representation distribution, and
+H(Z|O) =−E o∼p(o)[Ez∼p(z|o)[logp(z|o)]] is the conditional entropy measuring uncertainty in representations given
+observations.
+For a deterministic encoderf θ, giveno, we havez=f θ(o)deterministically, thusH(Z|O) = 0. This implies:
+I(Z;O) =H(Z)(42)
+Therefore, maximizing mutual information I(Z;O) is equivalent to maximizing marginal entropy H(Z) , i.e., making
+the representation distribution as dispersed as possible.
+Why MeanFlow Training Permits Representation Collapse.The MeanFlow training objective (Eq. 18) can be written
+as:
+LMF(θ) =E (o,a),ϵ,(r,τ)
+
+∥uθ(zτ , r, τ, o)−u tgt∥2
+(43)
+This is a pure regression loss that only constrains velocity prediction accuracy. Consider two extreme cases:
+Case 1: Dispersed Representations.Different observations oi, oj map to different representations hi ̸=h j. The velocity
+network can utilize representation differences to distinguish samples and generate precise conditional velocity predictions.
+Case 2: Collapsed Representations.All observations map to similar representations hi ≈h j, but the velocity network
+may still achieve low training loss through: (1) overfitting to statistical patterns in training data, (2) exploiting information in
+time embeddingτand noisy statez τ , and (3) compensating for representation information loss in subsequent layers.
+28
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+Neural network optimization exhibitsimplicit regularization: gradient descent tends to converge to “simple” solutions in
+parameter space. Collapsed representations correspond to solutions with lower effective complexity because a low-rank
+covariance matrix means the representation only varies along a few directions while most dimensions remain constant or
+highly correlated. Without explicit constraints, the optimization process may converge to such degenerate solutions since
+they require fewer “active” parameters to explain the data.
+Formal Characterization:Let µ=E[h] be the mean representation vector and ΣH =E[(h−µ)(h−µ) ⊤] be the
+representation covariance matrix. Representation collapse corresponds to rank(ΣH)≪d , meaning most feature dimensions
+are highly correlated or approximately constant.
+How Dispersive Regularization Maximizes Entropy. Entropy Interpretation of InfoNCE-L2 Loss:The InfoNCE-L2
+loss (Eq. 22) is:
+LNCE-L2 =− 1
+B
+BX
+i=1
+log exp(∥hi∥2
+2/τ)P
+k̸=i exp(−∥hi −h k∥2
+2/τ) (44)
+whereτ >0is the temperature parameter controlling the sharpness of the softmax distribution.
+Minimizing this loss is equivalent to:
+1.Maximizing the numerator:Encouraging∥h i∥2
+2 to increase, pushing representations away from the origin
+2. Maximizing exponential terms in denominator:Encouraging ∥hi −h k∥2
+2 to increase, pushing representations of
+different samples apart
+These two effects jointly cause representations to disperse in feature space, corresponding to a high-entropy distribution.
+Connection to Uniform Distribution:For finite samples, the distribution maximizing discrete entropy H(Z) is the uniform
+distribution. For continuous representation spaces, dispersive loss encourages representations to approximately uniformly
+cover a region of feature space rather than clustering around few points. Let the representation distribution be p(z) and
+uniform distribution be q(z) =Uniform(Z) . Dispersive loss can be understood as minimizing the distance between p(z)
+and some high-entropy reference distribution.
+Entropy Interpretation of Covariance Regularization:The covariance loss (Eq. 25) is:
+LCov = 1
+dh
+dhX
+i=1
+X
+j̸=i
+[C(H)] 2
+ij (45)
+where dh is the hidden dimension of representations and C(H)∈R dh×dh is the sample covariance matrix computed from
+the batchH. The notation[C(H)] ij denotes the(i, j)-th element of this matrix.
+This loss penalizes off-diagonal elements of the covariance matrix, encouraging C(H) to approach a diagonal matrix. For a
+d-dimensional Gaussian distributionN(µ,Σ)with meanµand covarianceΣ, the differential entropy is:
+H(N(µ,Σ)) = 1
+2 log det(2πeΣ) = d
+2 log(2πe) + 1
+2
+dX
+i=1
+logσ 2
+i (46)
+where σ2
+i denotes the i-th eigenvalue of Σ (or the i-th diagonal element when Σ is diagonal). The second equality follows
+from the determinant propertydet(kA) =k d det(A)for scalarkandd×dmatrixA:
+det(2πeΣ) = (2πe) d det(Σ) = (2πe)d
+dY
+i=1
+σ2
+i (47)
+Taking the logarithm:log det(2πeΣ) =dlog(2πe) + Pd
+i=1 logσ 2
+i , which yields the formula after multiplying by 1
+2.
+Geometrically, det(Σ) represents the volume of the probability concentration region in feature space: larger determinant
+corresponds to larger volume, meaning the distribution is more spread out and thus has higher entropy. Under fixed
+29
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+total varianceP
+i σ2
+i , entropy is maximized when the covariance matrix is diagonal, which follows from the AM-GM
+inequality: the productQ
+i σ2
+i (hence det(Σ)) is maximized when all σ2
+i are equal rather than having some large and others
+small. Decorrelation makes dimensions independent, avoiding information redundancy and thereby maximizing effective
+information capacity.
+The Combined Training Objective: An Information-Theoretic View.The DMPO Stage 1 total training objective
+(Eq. 26) can be understood from an information-theoretic perspective as:
+LStage1 =L MF|{z}
+minimize prediction error
++αdisp Ldisp
+|{z}
+maximizeH(Z)
+(48)
+According to the Data Processing Inequality, for the Markov chainO→Z→ ˆA, where ˆAdenotes the predicted action:
+I(O; ˆA)≤I(O;Z) =H(Z)(49)
+The intuition behind this inequality is that information can only decrease (never increase) through processing: when data
+passes through any transformation, some information may be lost but new information cannot be created. Therefore,
+maximizingH(Z)provides an upper bound guarantee on information content for downstream prediction tasks.
+Why One-Step Generation Amplifies the Need for Dispersive Regularization. Error Correction Mechanism in
+Multi-Step Inference:Consider K-step inference where K is the total number of denoising steps. Let δk denote the
+velocity prediction error at stepk, and∆τ k denote the time step size at stepk. The cumulative error in the final action is:
+ϵtotal =
+K−1X
+k=0
+∆τk ·δ k (50)
+For multi-step inference (large K), each step size ∆τk = 1/K is small, and subsequent steps can partially correct earlier
+errors. This provides robustness to degraded representation quality.
+Fragility of One-Step Inference:For one-step inference (K= 1), the entire state transition completes in one step:
+a=z 1 −u θ(z1, r= 0, τ= 1, o)(51)
+In this case: (1) step size ∆τ= 1 fully amplifies errors, (2) there is no opportunity for iterative correction, and (3) velocity
+prediction must be accurate in a single pass.
+Therefore, one-step inference requires the representation h=f θ(o) to provide sufficiently precise conditional information
+for the velocity network to generate accurate actions in a single forward pass. When representations collapse, representations
+of different observations become indistinguishable, and the velocity network cannot generate correct conditional velocity
+predictions.
+Formal Analysis:Let deff =rank(Σ H) denote the effective dimensionality of representations, i.e., the number of non-
+degenerate dimensions in the representation space. For tasks requiring discrimination among N distinct observation patterns
+(e.g., different manipulation states or object configurations), theoretically deff ≥log 2 N is needed to uniquely encode each
+pattern. Here N refers to the number of semantically distinct observation categories that the policy must distinguish, not the
+number of training samples or representation vectors. When deff is sufficient, the representation space has adequate capacity
+to encode observation differences. However, when collapse causes deff ≪log 2 N, representations cannot distinguish
+different observations, and velocity prediction degrades to an average response over all inputs.
+Summary.MeanFlow’s training objective contains only velocity prediction error and lacks constraints on representation
+structure, making collapsed representations valid local optima. This problem is amplified in few-step inference because
+limited iteration steps cannot compensate for representation information loss. DMPO addresses this through dispersive
+regularization, which provides:(1) Information-Theoretic Guarantee:Maximizing representation entropy H(Z) thereby
+maximizes mutual information I(Z;O) , ensuring representations sufficiently encode observation information (Eq. 42).
+(2) Geometric Effect:Introducing repulsive potential in feature space prevents representation clustering and maintains
+distribution uniformity.
+30
+
+One Step Is Enough: Dispersive MeanFlow Policy Optimization
+D.2. Unified Framework Design
+A potential concern is whether DMPO’s three components (MeanFlow one-step generation, dispersive regularization, and
+PPO fine-tuning) constitute “technology stacking” without principled integration. This subsection demonstrates that these
+components form a coherent, interdependent system arising from joint consideration of model architecture and algorithmic
+design.
+Design Philosophy.The core goal of DMPO is to achieve real-time robotic control through two architectural considerations:
+(1) adopting a lightweight model architecture, and (2) reducing the number of sampling steps to one. However, these
+architectural simplifications alone lead to severe performance degradation on complex tasks. Therefore, we jointly designed
+algorithmic improvements, including dispersive regularization and PPO fine-tuning, to complement the architectural choices.
+The theoretical analysis in Appendix C and Section D.1 proves why dispersive regularization is necessary for stable one-step
+generation, and experimental results validate its effectiveness.
+Functional Dependencies.The three components exhibit strict functional dependencies where removing any one compro-
+mises the entire system. Without dispersive regularization, MeanFlow’s one-step generation suffers from representation
+collapse, leading to unstable performance on multi-stage tasks. Without one-step generation, multi-step inference increases
+latency and fails to achieve real-time control; additionally, it drastically reduces PPO training throughput. Without PPO
+fine-tuning, the policy remains bounded by expert demonstration quality, limiting achievable performance on tasks with
+suboptimal demonstrations. This interdependence distinguishes DMPO from simple technique combination.
+Validation.Both theoretical analysis and experimental results confirm the necessity of all components. Ablation studies
+show that removing any single component significantly reduces task success rate or fails to achieve real-time control
+inference time. The strong correlation between representation diversity and task success rate validates that dispersive
+regularization directly enables stable one-step generation. DMPO achieves substantial speedup over multi-step baselines
+while matching or exceeding their final performance, demonstrating that the joint architecture-algorithm design successfully
+resolves the efficiency-performance trade-off.
+31

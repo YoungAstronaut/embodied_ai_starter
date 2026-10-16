@@ -1,0 +1,71 @@
+{
+  "I-CFM": {
+    "straightness": 2.5855,
+    "nfe1": {
+      "sw2": 2.4247,
+      "off_manifold": 1.0,
+      "mode_tv": 0.2105
+    },
+    "nfe2": {
+      "sw2": 0.6419,
+      "off_manifold": 0.7575,
+      "mode_tv": 0.0377
+    },
+    "nfe4": {
+      "sw2": 0.2944,
+      "off_manifold": 0.2045,
+      "mode_tv": 0.0225
+    },
+    "nfe16": {
+      "sw2": 0.2586,
+      "off_manifold": 0.0472,
+      "mode_tv": 0.0212
+    }
+  },
+  "OT-CFM": {
+    "straightness": 0.0069,
+    "nfe1": {
+      "sw2": 0.2174,
+      "off_manifold": 0.1937,
+      "mode_tv": 0.024
+    },
+    "nfe2": {
+      "sw2": 0.2158,
+      "off_manifold": 0.1425,
+      "mode_tv": 0.0227
+    },
+    "nfe4": {
+      "sw2": 0.2227,
+      "off_manifold": 0.1,
+      "mode_tv": 0.0235
+    },
+    "nfe16": {
+      "sw2": 0.2344,
+      "off_manifold": 0.0545,
+      "mode_tv": 0.0245
+    }
+  },
+  "2-Reflow": {
+    "straightness": 0.0006,
+    "nfe1": {
+      "sw2": 0.2406,
+      "off_manifold": 0.1117,
+      "mode_tv": 0.023
+    },
+    "nfe2": {
+      "sw2": 0.2411,
+      "off_manifold": 0.1047,
+      "mode_tv": 0.0233
+    },
+    "nfe4": {
+      "sw2": 0.2432,
+      "off_manifold": 0.097,
+      "mode_tv": 0.0242
+    },
+    "nfe16": {
+      "sw2": 0.2514,
+      "off_manifold": 0.0635,
+      "mode_tv": 0.0232
+    }
+  }
+}

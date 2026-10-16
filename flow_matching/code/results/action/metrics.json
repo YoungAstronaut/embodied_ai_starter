@@ -1,0 +1,75 @@
+{
+  "demo": {
+    "collision": 0.0,
+    "top_ratio": 0.477,
+    "goal_err": 0.0078
+  },
+  "n_seeds": 3,
+  "FM": {
+    "nfe1": {
+      "collision": "0.957±0.005",
+      "top_ratio": "0.562±0.014",
+      "goal_err": "0.012±0.000"
+    },
+    "nfe2": {
+      "collision": "0.219±0.011",
+      "top_ratio": "0.517±0.006",
+      "goal_err": "0.004±0.000"
+    },
+    "nfe4": {
+      "collision": "0.035±0.008",
+      "top_ratio": "0.506±0.008",
+      "goal_err": "0.004±0.001"
+    },
+    "nfe16": {
+      "collision": "0.006±0.002",
+      "top_ratio": "0.496±0.006",
+      "goal_err": "0.007±0.000"
+    }
+  },
+  "Shortcut": {
+    "nfe1": {
+      "collision": "0.088±0.002",
+      "top_ratio": "0.471±0.009",
+      "goal_err": "0.013±0.000"
+    },
+    "nfe2": {
+      "collision": "0.012±0.002",
+      "top_ratio": "0.474±0.010",
+      "goal_err": "0.009±0.000"
+    },
+    "nfe4": {
+      "collision": "0.003±0.001",
+      "top_ratio": "0.472±0.011",
+      "goal_err": "0.009±0.000"
+    },
+    "nfe16": {
+      "collision": "0.000±0.000",
+      "top_ratio": "0.472±0.012",
+      "goal_err": "0.009±0.001"
+    }
+  },
+  "MeanFlow": {
+    "nfe1": {
+      "collision": "0.068±0.007",
+      "top_ratio": "0.490±0.010",
+      "goal_err": "0.016±0.001"
+    },
+    "nfe2": {
+      "collision": "0.004±0.004",
+      "top_ratio": "0.496±0.001",
+      "goal_err": "0.009±0.000"
+    },
+    "nfe4": {
+      "collision": "0.000±0.000",
+      "top_ratio": "0.500±0.010",
+      "goal_err": "0.007±0.000"
+    },
+    "nfe16": {
+      "collision": "0.000±0.000",
+      "top_ratio": "0.500±0.015",
+      "goal_err": "0.009±0.000"
+    }
+  },
+  "FM_nfe1_dist_to_conditional_mean": 0.0187
+}

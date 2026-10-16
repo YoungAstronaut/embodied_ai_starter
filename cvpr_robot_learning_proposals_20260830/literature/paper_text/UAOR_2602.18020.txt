@@ -1,0 +1,1140 @@
+UAOR: Uncertainty-aware Observation Reinjection
+for Vision-Language-Action Models
+Jiabing Yang1,2, Yixiang Chen1,2, Yuan Xu1,2, Peiyan Li1,2, Zichen Wen3, Bowen Fang1,2,
+Tao Yu1,2, Xiangnan Wu1,2, Qisen Ma1,2, Kai Wang1,2, Ziheng He1,2, Yingda Li1,2,
+Zhengbo Zhang1,2, Jing Liu4, Nianfeng Liu4, Yan Huang1,2,4∗, Liang Wang1,2
+1School of Artificial Intelligence, University of Chinese Academy of Sciences
+2New Laboratory of Pattern Recognition (NLPR), Institute of Automation, Chinese Academy of
+Sciences 3Shanghai Jiao Tong University 4FiveAges
+yangjiabing2025@ia.ac.cn,yhuang@nlpr.ia.ac.cn
+Abstract:Vision–Language–Action (VLA) models leverage pretrained Vi-
+sion–Language Models (VLMs) as backbones to map images and instructions
+to actions, demonstrating remarkable potential for generalizable robotic manipula-
+tion. To enhance performance, existing methods often incorporate extra observation
+cues (e.g., depth maps, point clouds) or auxiliary modules (e.g., object detectors,
+encoders) to enable more precise and reliable task execution, yet these typically
+require costly data collection and additional training. Inspired by the finding that
+Feed-Forward Network (FFN) in language models can act as “key-value memory”,
+we proposeUncertainty-awareObservationReinjection (UAOR), an effective,
+training-free and plug-and-play module for VLA models. Specifically, when the cur-
+rent language model layer exhibits high uncertainty, measured byAction Entropy,
+it reinjects key observation information into the next layer’s Feed-Forward Network
+(FFN) through attention retrieval. This mechanism directly augments the hidden
+states with observation evidence at high-uncertainty layers, enabling more accurate
+and reliable action generation. Comprehensive experiments show that our method
+consistently improves diverse VLA models across simulation and real-world tasks
+with minimal overhead. Notably, UAOR eliminates the need for additional observa-
+tion cues or modules, making it a versatile and practical plug-in for existing VLA
+pipelines. The project page is athttps://uaor.jiabingyang.cn.
+Keywords:Vision-Language-Action Models, Uncertainty Estimation, Training-
+Free Inference, Plug-and-Play Module
+1 Introduction
+Recent advancements in Vision–Language Models (VLMs) [1, 2, 3, 4] have delivered remarkable
+capabilities in multimodal understanding and generalization. Building on these foundations, Vi-
+sion–Language–Action (VLA) models [ 5, 6, 7, 8] fine-tuned on large-scale robotic datasets integrate
+visual observations with language instructions to synthesize low-level control actions, exhibiting
+strong task execution and robust generalization across diverse robotic manipulation scenarios. Despite
+these strengths, persistent data-collection bottlenecks and considerable training budgets remain key
+barriers to scaling and deploying VLA models in practice.
+To achieve performance gains, many efforts [ 9, 10, 11, 12] have explored interventions at the
+input level, such as augmenting observations with additional observation priors. TraceVLA [ 9]
+introduces visual trace prompting and fine-tunes on 150K robot manipulation trajectories with visual
+traces. SpatialVLA [ 13] utilizes Ego3D Position Encoding to inject 3D information into the input
+∗Corresponding author.
+arXiv:2602.18020v2  [cs.CV]  6 Jun 2026
+
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Uncertainty
+Uncertainty
+= 0.75
+Last 16 Layers
+(a) LIBERO-Spatial
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Uncertainty
+Uncertainty
+= 0.80
+Last 16 Layers (b) LIBERO-Object
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Uncertainty
+Uncertainty
+= 0.75
+Last 16 Layers (c) LIBERO-Goal
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Uncertainty
+Uncertainty
+= 0.80
+Last 16 Layers (d) LIBERO-Long
+Figure 1: Layer-wise uncertainty of OpenVLA-OFT across four LIBERO task suites. The dashed red
+line denotes the chosen uncertainty threshold γ, while the green segment highlights the last 16 layers.
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Attention
+Observation
+Language
+Action
+(a) LIBERO-Spatial
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Attention
+Observation
+Language
+Action (b) LIBERO-Object
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Attention
+Observation
+Language
+Action (c) LIBERO-Goal
+2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32
+Transformer Layer
+0.00
+0.20
+0.40
+0.60
+0.80
+1.00Attention
+Observation
+Language
+Action (d) LIBERO-Long
+Figure 2: Layer-wise cross-attention from action tokens to observation, language, and action tokens
+in OpenVLA-OFT across four LIBERO task suites.
+observations of the visual-language-action model. While effective, such methods often rely on
+additional observation priors (e.g., visual traces, depth maps), auxiliary modules (e.g., depth/point-
+cloud encoders) and extensive fine-tuning, rendering them resource-intensive and poorly scalable to
+larger backbones and datasets. This naturally raises the question:Is it possible to boost VLA models
+in a training-free manner, without requiring supplementary observation cues or auxiliary modules?
+To answer this, we observe that VLA models inherit strong perception from their VLM backbones
+but tend to progressively “forget” the observation during forward inference, akin to human working-
+memory decay [14, 15]. This decay manifests as elevated uncertainty in the early-to-middle layers
+(Figure 1, layers 2–8), a pattern that correlates with unfaithful actions [ 16]. Consistently, in the
+same layer window the attention from action tokens to observation tokens drops sharply and remains
+low (Figure 2), indicating that the model rarely consults the observation when predicting actions. A
+natural remedy is to reinforce observation information whenever uncertainty is high. Inspired by
+findings that FFNs can act as key-value memory [17, 18, 19], we adopt the inherent FFN to retrieve
+key observation features and reinject them into the hidden states.
+Building on these insights, we propose a lightweight and training-free module,Uncertainty-aware
+ObservationReinjection (UAOR), for VLA models. It computes layer-wise uncertainty viaAction
+Entropy, and reinjects observation features into the FFN of the subsequent layer when the uncertainty
+exceeds a threshold. This blending mechanism reinforces observation information in high-uncertainty
+regions. Extensive experiments in both simulation and real-world environments show that UAOR
+consistently improves heterogeneous models across diverse manipulation tasks and embodiments,
+without retraining or architectural changes. In summary, our main contributions are as follows:
+• We introduceAction Entropy, a tailored metric to quantify layer-wise uncertainty in VLA models.
+It reveals a sustained high level of uncertainty in the early-to-middle layers of action prediction,
+coinciding with suppressed attention from action tokens to observation tokens.
+• We presentUAOR, a training-free and plug-and-play module that treats FFN layers as “key-value
+memory” and reinjects observation features into them when the model exhibits high uncertainty,
+reinforcing the model’s use of observation evidence throughout the inference process.
+• Comprehensive experiments in multiple simulation and real-world environments show that UAOR
+yields consistent performance gains across various VLA models without relying on extra observa-
+tion cues or auxiliary modules, while incurring negligible inference overhead.
+2 Related Work
+Vision-Language-Action Models.Integrating multimodal understanding with action execution,
+Vision–Language–Action (VLA) models pave the way for more capable robotic systems. A line of
+works [20, 5, 21, 6] fine-tune pretrained VLMs on large-scale robot data. RT-2X [22] trains a 55B
+model on the Open X Embodiment (OXE) dataset [23] while OpenVLA [5] trains a 7B model based
+2
+
+Text 
+Tokenizer
+Vision 
+Encoder
+Proprio
+Projector
+… … …
+Observation Tokens Instruction Tokens
+FFN
+Input hidden states ℎ𝑡
+ℓ
+… …… …
+Layer ℓ
+…
+… … …
+FFN
+Output hidden states ෠ℎ𝑡
+ℓ+1
+Input hidden states ℎ𝑡
+ℓ+1
+… …
+Layer ℓ + 1
+…
+… … …
+Large Language Model
+…
+Observation 
+Memory
+Queries
+Keys/Values
+Retrieved
+Observation 
+Features
+𝒖𝒕
+ℓ > 𝜸?
+Yes
+LM Head
+𝒖𝒕
+ℓ
+× 𝜶
+× (𝟏 − 𝜶)
+Output hidden states ෨ℎ𝑡
+ℓ
+…
+𝒑𝒕,𝒏
+𝒍
+𝒏=𝟏
+𝑵𝒂
+MLP/Diffusion 
+Action Head
+(𝒂𝑡, 𝒂𝑡+1, … , 𝒂𝑡+𝐻−1) ∆T = [-0.8, 0.2, 0.1]
+∆R = [2°, 12°, -8°]
+∆Gripper × 𝐻
+Action/Condition Tokens
+Language Instruction
+“pick up the black bowl between 
+the plate and the ramekin and 
+place it on the plate.”
+Proprioceptive State
+(If available)
+Visual Input
+Wrist ImageStatic Image
+Figure 3:Overall framework of UAOR. We compute action entropy at layerℓ to estimate uncertainty.
+If it exceeds a threshold γ, we reinject observation features, including visual and proprioceptive
+features (if available), into the next layer’s FFN via a key-value retrieval mechanism, where the input
+hidden states serve as queries and the observation features act as key-value memory.
+on Prismatic [2] and π0 fine-tunes PaliGemma VLM [ 3] with a novel flow matching action head.
+Another line of works [24, 25, 26] utilize web-scale videos; e.g., UniVLA [25] distills latent actions
+from internet videos, and EC-Flow [26] predicts embodiment-centric flow from unlabeled videos.
+Recent dual-system architectures [ 27, 28, 29, 30] separate high-level reasoning (System 2) from
+low-level control (System 1), showing promise for scalable general-purpose robotic intelligence.
+Uncertainty in Language Models.Uncertainty in language models typically reflects the ambiguity
+and reliability of the predictive distribution. A key indicator isEntropy, where higher values imply
+lower confidence and potential distribution shift [31]. Dropout Decoding [32] applies uncertainty-
+guided token dropout to input visual tokens for reliability and quality. A recent study of reinforcement
+learning for LLMs [33] indicates that a minority of high-entropy tokens drives most of the reasoning
+gains. In the VLA community, Valle et al.[16] propose Token-Based Entropy as an uncertainty metric
+for VLA models, and Karli et al. [34] leverages token-level uncertainty to enable uncertainty-aware
+human intervention during robotic manipulation. In our design, we quantify uncertainty through
+Action Entropy on action / cognition tokens to drive observation reinjection during action prediction.
+Visual Augmentation for Manipulation.Visual augmentation has emerged as a promising strategy
+to strengthen perception and enhance reliability in robotic control. TraceVLA [ 9] prompts visual
+traces for spatial-temporal awareness; PointVLA [35] and 3D-CA VLA [10] fuse point clouds and
+depth maps for spatial reasoning; Evo-0 [ 11] and Spatial Forcing [36] implicitly inject 3D priors
+from VGGT [37]; AimBot [12] overlays shooting lines and scope reticles for auxiliary guidance;
+and ReconVLA [38] and GuidedVLA [39] reinforce visual grounding via gaze reconstruction and
+action-attention specialization. Compared with these methods, UAOR augments observations via the
+model’s inherent FFN layers, without additional visual cues or auxiliary modules.
+3 Methodology
+3.1 Background: FFN as Key-Value Memory
+Following the FFN-as-memory analysis of Geva et al. [17], a transformer FFN with weights W1 ∈
+Rd×D,W 2 ∈R D×d and pointwise nonlinearityϕadmits the rewriting
+FFN(h) =ϕ(h W 1)W 2 =
+DX
+i=1
+ϕ(⟨h,k i⟩)v i,(1)
+3
+
+where the columns of W1 and W2 form D key-value pairs {(ki,v i)}D
+i=1 with ki,v i ∈R d. Under this
+view, an FFN performs an unnormalized soft retrieval: h queries D keys and aggregates matching
+values by similarity. Building on this view, a line of work has explored injecting external information
+into FFN memory, including visual prompting in MLLMs [18] and inference-time visual reinjection
+for hallucination mitigation [ 19]. Following the same paradigm, we inject observation-derived
+key-value pairs at selected layers (§3.3), leaving the pretrained{(k i,v i)}untouched.
+3.2 Problem Formulation
+Vision–Language–Action (VLA) models are designed to jointly process observations and language
+instructions for the purpose of generating appropriate actions for robots. Formally, given the ob-
+servation ot at time t and language instruction l, a model π predicts a temporal action sequence
+(at,a t+1, ...,a t+H−1)(i.e., action chunk sizeH) for task execution:
+π: (o t,l)→(a t,a t+1, ...,a t+H−1).(2)
+In some VLA models [6, 7], the observation ot includes visual input ov
+t and proprioceptive state op
+t ,
+concatenated as ot = [ov
+t ;o p
+t ]. In other models, the observation considers only the visual modality,
+i.e., ot =o v
+t . While in general at can represent diverse control schemes and end-effector types, we
+adopt a simplified setup in this work where actions are defined as 7-DoF vectors corresponding to the
+gripper’s end-effector pose:
+at = [∆x,∆y,∆z,∆ϕ,∆θ,∆ψ, g],(3)
+where ∆x,∆y,∆z represent the relative position of the end effector,∆ϕ,∆θ,∆ψ denote the rotation
+changes, andg∈ {0,1}indicates the gripper’s open/close state.
+3.3 Uncertainty-Aware Observation Reinjection
+Uncertainty measured byAction Entropy.Building on prior inference-time interventions that
+exploit layer-wise predictive uncertainty in language models [40, 41, 32, 19], we introduceAction
+Entropy, a VLA-specific metric that quantifies uncertainty via the entropy of action-related output
+distributions. Note that current VLA models typically follow two architectures: single-system and
+dual-system. For single-system models (e.g., OpenVLA-OFT [7]), actions are derived directly from
+hidden states, either as discrete tokens (256-bin discretization using rare vocabulary tokens) or
+continuous vectors (via MLP or diffusion heads). We compute entropy directly over the action tokens.
+For dual-system models (e.g., CogACT [21]), System 1 generates actions conditioned on System 2
+outputs. We therefore compute entropy over these condition tokens, which guide action generation.
+Based on this setup, we define layer-wise action entropy at each time step as:
+H(ℓ)
+t,n =−
+PK
+i=1 p(ℓ)
+t,n,i logp (ℓ)
+t,n,i
+logK ,(4)
+where p(ℓ)
+t,n ={p (ℓ)
+t,n,i}K
+i=1 denotes the categorical probability distribution over top-K candidate tokens
+for the n-th action or condition token, obtained by projecting the FFN outputs at layer ℓ through the
+language modeling head (LM Head) and normalizing with softmax, which is a standard practice
+in the “Logit Lens” paradigm [42, 43]. For discrete actions, we set K= 256 to match the number
+of action bins, since the model tends to assign higher probability mass to these 256 action tokens.
+For continuous actions, we likewise fix K= 256 for definitional convenience and cross-setting
+consistency. Based on this formulation, we define the uncertainty of each layer as the average action
+entropy over all action tokens or condition tokens:
+u(ℓ)
+t = 1
+Na
+NaX
+n=1
+H(ℓ)
+t,n,(5)
+where Na is the number of selected tokens (see Appendix A.2 for model-specific settings). Eq. 5
+shows that higher Action Entropy indicates greater uncertainty about the action chunk at layer ℓ.
+4
+
+Algorithm 1Uncertainty-aware Observation Reinjection (UAOR).
+Require: VLA model π with L layers; observation ot=(ov
+t ,o p
+t ); language instruction ℓ; uncertainty
+thresholdγ; blending coefficientα.
+Ensure:Action chunkA t=(at, . . . ,at+H−1).
+1:forℓ= 1toL−1do
+2: Apply the LM head to FFN output ˜h(ℓ)
+t on action tokens (single-system) or the cognition
+token (dual-system) to obtain per-token distributionsp (ℓ)
+t,n.
+3:Compute Action Entropyu (ℓ)
+t ← 1
+Na
+PNa
+n=1 H(ℓ)
+t,n ▷Eq. 4–5
+4:ifu (ℓ)
+t > γthen
+5:ComputeINJ (ℓ+1)
+t (ot |h (ℓ+1)
+t )=P
+i ϕ(⟨h(ℓ+1)
+t ,o t,i⟩)o t,i ▷Eq. 7
+6:ReplaceFFN (ℓ+1)(h(ℓ+1)
+t )withα·INJ (ℓ+1)
+t + (1−α)·FFN (ℓ+1)(h(ℓ+1)
+t )▷Eq. 6
+7:end if
+8:end for
+9:DecodeA t from the final hidden state through the policy head.
+Figure 1 visualizes these trends for OpenVLA-OFT across four LIBERO suites: Action Entropy rises
+in the early layers (layers 2–8), remains elevated through the middle of the stack, and only collapses
+toward the final 16 layers, providing a clear layer-wise signal we use to gate observation reinjection.
+Observation Reinjection with FFN.As previously discussed, early layers often exhibit high un-
+certainty, a pattern highly correlated with the decay of observation attention. To mitigate this, we
+introduceUncertainty-Aware Observation Reinjection(UAOR), illustrated in Figure 3. Specifi-
+cally, during the forward pass, we compute the uncertainty u(ℓ)
+t based on the action entropy at the
+current layer ℓ. If this uncertainty exceeds a chosen threshold γ, it indicates that the model requires
+clearer observation guidance. Since the forward pass for layer ℓ is completed, we perform reinjection
+at thesubsequentlayer ( ℓ+ 1 ) to avoid the computational and memory overhead associated with
+backtracking. Concretely, we treat the encoded observation features as a key-value memory. We use
+the hidden states entering the FFN at layer ℓ+ 1 , denoted as h(ℓ+1)
+t , as queries to attend over this
+memory. The retrieved features are then blended with the original output of the FFN at layer ℓ+ 1 .
+The formulated process is defined as:
+FFN(ℓ+1)
+
+h(ℓ+1)
+t ,o t
+
+=αINJ (ℓ+1)
+t
+
+ot |h (ℓ+1)
+t
+
++ (1−α) FFN (ℓ+1)
+
+h(ℓ+1)
+t
+
+.(6)
+where α∈[0,1] is the blending ratio. The retrieved observation features INJ (ℓ+1)
+t are computed using
+h(ℓ+1)
+t as the queries:
+INJ (ℓ+1)
+t (ot |h (ℓ+1)
+t ) =
+NoX
+i=1
+ϕ(⟨h(ℓ+1)
+t ,o t,i⟩)·o t,i,(7)
+where ot = (o t,1, ...,o t,No) serves as the key-value memory. This design allows the model to
+dynamically recover observation evidence inside the next-layer FFN when confusion arises, without
+needing to halt or backtrack the inference. The complete algorithmic flow is detailed in Algorithm 1.
+4 Experiments
+4.1 Simulation Experiments
+Simulation Benchmarks and Baselines.We conduct evaluations on three widely-used simulation
+benchmarks in robot learning: LIBERO [45], SIMPLER [46], and CALVIN [47]. For these bench-
+marks, we select several representative VLA models as our baseline: OpenVLA-OFT (7B) [7] and
+π0 (3B) [6] for LIBERO, CogACT (7B) [21] for SIMPLER, and LLaV A-VLA (0.5B) for CALVIN.
+These baselines differ in both architecture and scale—OpenVLA-OFT and LLaV A-VLA are single-
+system models, while π0 and CogACT follow dual-system design; model sizes range from 0.5B to 7B
+5
+
+Table 1: Performance comparison on the LIBERO benchmark. “†” indicates our reproduced results.
+Method Spatial Object Goal Long Average
+OpenVLA [5] (CoRL’24) 84.7 88.4 79.2 53.7 76.5
+TraceVLA [9] (ICLR’25) 84.6 85.2 75.1 54.1 74.8
+SpatialVLA [13] (RSS’25) 88.2 89.9 78.6 55.5 78.1
+UniVLA [25] (RSS’25) 96.5 96.8 95.6 92.0 95.2
+CogVLA [44] (NeurIPS’25) 98.698.896.6 95.4 97.4
+3D-CA VLA [10] (arXiv’25) 98.299.898.2 96.1 98.1
+OpenVLA-OFT† [7] (RSS’25) 98.2±0.4 98.2±0.2 97.6±0.4 94.2±0.2 97.1±0.1
+w/UAOR(Ours)99.0±0.298.4±0.498.2±0.496.2±0.098.0±0.2
+∆ +0.8 +0.2 +0.6 +2.0 +0.9
+π 0 † [6] (RSS’25) 96.3±0.6 96.7±0.7 92.9±1.2 80.5±1.2 91.7±0.5
+w/UAOR(Ours)97.3±0.298.5±0.294.3±0.282.5±0.593.2±0.1
+∆ +1.0 +1.8 +1.4 +2.0 +1.5
+Table 2: Performance comparison on the SIMPLER benchmark. “†” indicates our reproduced results.
+Method Pick Move Open/Close Open AverageCoke Can Near Drawer and Place
+RT-1 [20] (arXiv’23) 85.7 44.2 73.0 6.5 52.4
+RT-2-X [23] (CoRL’23) 78.7 77.9 25.0 3.7 46.3
+OpenVLA [5] (CoRL’24) 18.0 56.3 63.0 0.0 34.3
+CogACT† [21] (arXiv’24) 92.3±0.3 83.7±0.6 72.7±0.2 43.5±1.0 73.1±0.7
+w/UAOR(Ours)95.0±0.387.1±0.373.6±0.447.2±0.475.7±0.5
+∆ +2.7 +3.4 +0.9 +3.7 +2.6
+Table 3: Performance comparison on the CALVIN benchmark. “†” indicates our reproduced results.
+Method Success Rate (%) Avg. Len1/5 2/5 3/5 4/5 5/5
+RoboFlamingo [48] (ICLR’24) 82.4 61.9 46.6 33.1 23.5 2.47
+Vidman [49] (NIPS’24) 91.5 76.4 68.2 59.2 46.7 3.42
+OpenVLA [5] (CoRL’24) 91.3 77.8 62.0 52.1 43.5 3.27
+VLAS [50] (ICLR’25) 87.2 64.2 40.9 28.1 19.6 2.40
+LLaV A-VLA† [51] (ICRA’26) 94.4±0.2 82.0±0.8 70.8±0.3 59.4±0.6 48.2±0.4 3.55±0.05
+w/UAOR(Ours)95.5±0.384.6±0.672.3±0.560.7±0.249.1±0.03.67±0.03
+∆ +1.1 +2.6 +1.5 +1.3 +0.9 +0.12
+parameters. This setup enables a comprehensive assessment of UAOR’s impact across heterogeneous
+VLA models, tasks, and embodiments. The main experiments are conducted on NVIDIA 4090 GPUs
+under three different random seeds to ensure consistency and reliability. It is worth noting that our
+reproduction uses the official checkpoints, and results may vary slightly due to the specific model
+weights and hardware resources. More implementation details are presented in Appendix A.
+Experimental Results on LIBERO.Based on OpenVLA-OFT, UAOR delivers consistent gains
+across all four suites and achieves a remarkable average success rate of98.0%, as shown in Table 1.
+Notably, this performance is comparable to the recent 3D-CA VLA [10] (98.1%), yet UAOR elimi-
+nates the need for auxiliary depth inputs, CoT reasoning, and fine-tuning, demonstrating superior
+efficiency. Validating generality, UAOR also consistently boosts the cutting-edge dual-system policy
+π0 [6] by+1.5points on average. The pronounced gains onLIBERO-Longacross both architec-
+tures (+2.0) suggest that selectively reinforcing observation information effectively mitigates the
+“forgetting” of perceptual cues and reduces error accumulation during complex sequential reasoning.
+Experimental Results on SIMPLER.Table 2 shows that UAOR raises the average success rate of
+CogACT by+2.6points (73.1 → 75.7; ∼3.6%relative). The improvements are most evident onPick
+coke can(+2.7),Open top drawer and place apple(both+3.7) andMove near(+3.4), with a smaller
+gain onOpen/Close drawer(+0.9). These tasks demand precise localization and placement under
+6
+
+visual clutter, and the results suggest that uncertainty-aware observation reinjection improves scene
+grounding and decision reliabilitywithoutextra priors or retraining, validating the utility of UAOR
+as a training-free plug-in module.
+Experimental Results on CALVIN.As demonstrated in Table 3, with LLaV A-VLA on the ABC→D
+split (Fig. 3), UAOR improves success on every track and increases the average consecutive com-
+pletion length by+0.12(3.55 → 3.67; ∼3.4%relative). The consistent gains across progressively
+longer task chains indicate that the freshly-injected observation evidence helps sustain action quality
+even as the task horizon grows. Together with LIBERO and SIMPLER, these results substantiate
+that UAOR provides reliable, training-free improvements across heterogeneous VLA architectures,
+tasks, and embodiments. We also provide additional experimental results in Appendix B, including
+multi-seed evaluations and qualitative visualizations to further show the effectiveness of UAOR.
+4.2 Real-World Experiments
+ZED 2i
+Franka 
+Research 3
+Real Robot Setup Basic Setting3D Mouse
+Figure 4: Real-World Setup and Results.
+Real-World Setup.We perform real-robot ex-
+periments to validate the effectiveness of UAOR
+in the real world. Our real-robot setup includes
+a Franka Research 3 robot arm equipped with a
+parallel-jaw gripper, a static ZED 2i camera, and
+a 3D mouse (Figure 4). In total, we evaluate on
+four tasks: 1)Close the upper drawer, 2)Put the
+redbull on the plate, 3)Put the lion on the top
+shelf, and 4)Stand the coke can up. These tasks
+range from simple short-horizon placement to
+complex long-horizon multi-stage manipulation.
+We fine-tune both OpenVLA-OFT and CogACT on each task using 50 expert trajectories and evaluate
+each task with 20 test rollouts (see Appendix A.3 for more details).
+Results.Figure 4 reports the real-world evaluation results on both OpenVLA-OFT and CogACT. For
+OpenVLA-OFT, we observe consistent performance improvements acrossall four tasks, with the
+average success rate increasing from 55.0% to 72.5% (+31.8%relative). The largest relative gain
+appears on the most challenging task,Stand the coke can up(+44.4%relative). Crucially, UAOR
+demonstrates strong generalizability when applied toCogACT. It achieves improvements acrossall
+four tasks, boosting the average success rate from 63.8% to 78.8% (+23.5%relative). Notably, in
+thePut the redbull on the platetask, UAOR increases the success rate by an absolute20%. These
+combined results validate the effectiveness of UAOR in enhancing manipulation robustness and
+generating faithful actions across different model architectures in real-world scenarios.
+4.3 Ablation Studies
+In this section, we conduct ablation studies on the LIBERO benchmark based on OpenVLA-OFT to
+investigate the effectiveness of our design choices.
+Table 4: Factorial ablation on LIBERO (OpenVLA-
+OFT): feature extractor (mean pool vs. attention
+retrieval)×trigger (all / random / entropy).
+Extractor Trigger Spatial Object Goal Long Avg.
+Baseline98.2 98.2 97.6 94.2 97.1
+Mean Pool
+All 98.0 96.8 95.8 94.4 96.3
+Random 98.4 97.8 97.8 94.8 97.2
+Entropy 98.0 97.8 97.6 93.8 96.8
+Attn Retr.
+All 97.8 97.6 96.2 95.2 96.7
+Random 97.8 97.6 96.4 93.6 96.4
+Entropy 99.0 98.4 98.2 96.2 98.0
+Ablation on Core Designs.Table 4 crosses two
+design axes: feature extraction (mean pooling
+vs. attention retrieval) and trigger policy (all lay-
+ers, random, entropy-gated), whereRandomis
+rate-matched toEntropy.(1) Feature extractor.
+At theEntropytrigger, mean pooling falls below
+the baseline (96.8% vs. 97.1%) while attention
+retrieval lifts it to 98.0%, showing that pooling
+cannot select the cues relevant to the current hid-
+den state.(2) Trigger policy.Under attention
+retrieval, bothAllandRandomtriggering per-
+form as noise (96.7% and 96.4%); onlyEntropy
+7
+
+0.50 0.60 0.70 0.80 0.90
+90
+92
+94
+96
+98
+100Success Rate (%)
+LIBERO-Spatial
+LIBERO-Object
+LIBERO-Goal
+LIBERO-Long
+(a) Impact ofγ
+0.00 0.03 0.05 0.08 0.10
+90
+92
+94
+96
+98
+100Success Rate (%)
+LIBERO-Spatial
+LIBERO-Object
+LIBERO-Goal
+LIBERO-Long (b) Impact ofα
+0.00
+0.02
+0.04
+0.06
+0.08
+0.10
+0.500.600.700.800.90
+93.5
+94.0
+94.5
+95.0
+95.5
+96.0
+Success Rate (%) (c) Impact ofγandα
+Figure 5: Impact of uncertainty thresholdγand blending factorαacross four LIBERO task suites.
+yields a gain to 98.0%. SinceRandomis rate-matched, the improvement comes not from injecting
+more often but from selecting the layers where injection matters. Additionally, we have also per-
+formed an ablation study in Appendix B.1 to verify the necessity and efficiency of injecting into the
+next layer’s FFN compared to other architectural alternatives. Collectively, these findings validate the
+effectiveness of the core designs of UAOR.
+Table 5: Reinjection information ablation on
+LIBERO based on OpenVLA-OFT. V ., P., I.
+denote Vision, Proprio, and Instruction.
+# V . P. I. Spatial Object Goal Long Avg.
+1✗ ✗ ✗ 98.2 98.2 97.6 94.2 97.1
+2✓✗ ✗ 98.4 98.0 97.2 94.6 97.1
+3✗✓✗ 97.4 97.4 97.4 93.4 96.4
+4✗ ✗✓ 98.4 98.4 97.0 93.8 96.9
+5 ✓ ✓ ✗ 99.0 98.4 98.2 96.2 98.0
+6✓✗✓ 97.6 97.8 96.6 93.4 96.4
+7✗✓ ✓ 98.0 98.2 97.8 94.0 97.0
+8✓ ✓ ✓ 98.4 98.0 96.6 93.8 96.7
+Why Select Observation to Reinject?Table 5
+presents an ablation on the type of information rein-
+jected into FFN layers. Results show that reinjecting
+observation information (i.e., visual and propriocep-
+tive features) yields the most consistent improvements.
+In contrast, reinjecting instruction features—alone or
+in combination—leads to no improvement or even
+drops. This suggests that visual and proprioceptive
+features play a critical role in guiding robot behav-
+ior, while also revealing a limitation of current VLA
+models—their insufficient instruction-following capa-
+bility and tendency to overfit to static language inputs.
+The Impact of γ and α.Figure 5 illustrates the effect of varying the uncertainty threshold γ and the
+blending factor α, where Figures 5a and 5b show the marginal effects when fixing one hyperparameter
+to its optimal value. To further investigate their interaction, we present a joint sensitivity analysis
+on LIBERO-Long in Figure 5c, where the 3D surface plot follows a convex trend, indicating thatγ
+and α must be balanced to achieve optimal results. Specifically, we observe two failure modes at the
+extremes: (1)Over-correction: A small γ (frequent injection) coupled with a large α (strong mixing)
+degrades performance, likely by disrupting critical internal representations. (2)Under-correction: A
+large γ (rare injection) coupled with a small α (weak mixing) fails to provide sufficient observation
+guidance. The distinct peak in Figure 5c confirms our selected parameters lie within the optimal
+region; in practice, we use a heuristic strategy detailed in Appendix A.2 to determineγandα.
+Complexity Analysis.UAOR introduces negligible inference overhead in practice; see Appendix C
+for the theoretical analysis and runtime measurements.
+5 Conclusion and Limitations
+We present UAOR, a lightweight, training-free module designed to boost VLA models. By introducing
+Action Entropyas a measure of inference-time uncertainty, UAOR dynamically reinjects observation
+information into the next-layer FFN when uncertainty is high, directly augmenting the hidden state
+with silent observation features and leading to more accurate and reliable action generation. We
+validate its effectiveness across a wide range of VLA models, tasks, and embodiments in both
+simulation and real-world experiments. Without requiring additional observation cues, modules or
+training, UAOR consistently achieves performance gains with negligible computational overhead,
+making it an effective and plug-and-play module for existing VLA models.
+8
+
+Limitations.Despite the effectiveness of UAOR, two limitations remain. First, although our
+joint sensitivity analysis (Figure 5c) reveals a broad optimum, the uncertainty threshold γ and the
+blending coefficient α still require light per-architecture and per-task calibration rather than being
+fully calibration-free. Second, our real-robot evaluations were conducted only on a Franka Research
+3 arm due to hardware constraints, and broader validation across different embodiments is needed.
+References
+[1] H. Liu, C. Li, Y . Li, and Y . J. Lee. Improved baselines with visual instruction tuning. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages
+26296–26306, 2024.
+[2] S. Karamcheti, S. Nair, A. Balakrishna, P. Liang, T. Kollar, and D. Sadigh. Prismatic vlms: Inves-
+tigating the design space of visually-conditioned language models. InForty-first International
+Conference on Machine Learning, 2024.
+[3] L. Beyer, A. Steiner, A. S. Pinto, A. Kolesnikov, X. Wang, D. Salz, M. Neumann, I. Alabdul-
+mohsin, M. Tschannen, E. Bugliarello, et al. Paligemma: A versatile 3b vlm for transfer.arXiv
+preprint arXiv:2407.07726, 2024.
+[4] S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+Qwen2. 5-vl technical report.arXiv preprint arXiv:2502.13923, 2025.
+[5] M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. P. Foster,
+P. R. Sanketi, Q. Vuong, et al. Openvla: An open-source vision-language-action model. In
+Conference on Robot Learning, pages 2679–2713. PMLR, 2025.
+[6] K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman,
+B. Ichter, S. Jakubczak, T. Jones, L. Ke, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch,
+L. X. Shi, J. Tanner, Q. Vuong, A. Walling, H. Wang, and U. Zhilinsky.π0: A vision-language-
+action flow model for general robot control, 2024. URL https://arxiv.org/abs/2410.
+24164.
+[7] M. J. Kim, C. Finn, and P. Liang. Fine-tuning vision-language-action models: Optimizing speed
+and success.arXiv preprint arXiv:2502.19645, 2025.
+[8] P. Li, Y . Chen, H. Wu, X. Ma, X. Wu, Y . Huang, L. Wang, T. Kong, and T. Tan. Bridgevla:
+Input-output alignment for efficient 3d manipulation learning with vision-language models.
+arXiv preprint arXiv:2506.07961, 2025.
+[9] R. Zheng, Y . Liang, S. Huang, J. Gao, H. Daumé III, A. Kolobov, F. Huang, and J. Yang.
+Tracevla: Visual trace prompting enhances spatial-temporal awareness for generalist robotic
+policies.arXiv preprint arXiv:2412.10345, 2024.
+[10] V . Bhat, Y .-H. Lan, P. Krishnamurthy, R. Karri, and F. Khorrami. 3d cavla: Leveraging depth
+and 3d context to generalize vision language action models for unseen tasks.arXiv preprint
+arXiv:2505.05800, 2025.
+[11] T. Lin, G. Li, Y . Zhong, Y . Zou, and B. Zhao. Evo-0: Vision-language-action model with
+implicit spatial understanding.arXiv preprint arXiv:2507.00416, 2025.
+[12] Y . Dai, J. Lee, Y . Zhang, Z. Ma, J. Yang, A. Zadeh, C. Li, N. Fazeli, and J. Chai. Aimbot: A
+simple auxiliary visual cue to enhance spatial awareness of visuomotor policies.arXiv preprint
+arXiv:2508.08113, 2025.
+[13] D. Qu, H. Song, Q. Chen, Y . Yao, X. Ye, Y . Ding, Z. Wang, J. Gu, B. Zhao, D. Wang, et al.
+Spatialvla: Exploring spatial representations for visual-language-action model.arXiv preprint
+arXiv:2501.15830, 2025.
+9
+
+[14] D. H. Ballard, M. M. Hayhoe, and J. B. Pelz. Memory representations in natural tasks.Journal
+of cognitive neuroscience, 7(1):66–80, 1995.
+[15] T. S. Horowitz and J. M. Wolfe. Visual search has no memory.Nature, 394(6693):575–577,
+1998.
+[16] P. Valle, C. Lu, S. Ali, and A. Arrieta. Evaluating uncertainty and quality of visual language
+action-enabled robots.arXiv preprint arXiv:2507.17049, 2025.
+[17] M. Geva, R. Schuster, J. Berant, and O. Levy. Transformer feed-forward layers are key-value
+memories. InProceedings of the 2021 Conference on Empirical Methods in Natural Language
+Processing, pages 5484–5495, 2021.
+[18] S. Jie, Y . Tang, N. Ding, Z.-H. Deng, K. Han, and Y . Wang. Memory-space visual prompting
+for efficient vision-language fine-tuning. InInternational Conference on Machine Learning,
+pages 22062–22074. PMLR, 2024.
+[19] X. Zou, Y . Wang, Y . Yan, Y . Lyu, K. Zheng, S. Huang, J. Chen, P. Jiang, J. Liu, C. Tang, et al.
+Look twice before you answer: Memory-space visual retracing for hallucination mitigation in
+multimodal large language models.arXiv preprint arXiv:2410.03577, 2024.
+[20] A. Brohan, N. Brown, J. Carbajal, Y . Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan, K. Haus-
+man, A. Herzog, J. Hsu, et al. Rt-1: Robotics transformer for real-world control at scale.arXiv
+preprint arXiv:2212.06817, 2022.
+[21] Q. Li, Y . Liang, Z. Wang, L. Luo, X. Chen, M. Liao, F. Wei, Y . Deng, S. Xu, Y . Zhang, et al.
+Cogact: A foundational vision-language-action model for synergizing cognition and action in
+robotic manipulation.arXiv preprint arXiv:2411.19650, 2024.
+[22] B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, et al.
+Rt-2: Vision-language-action models transfer web knowledge to robotic control. InConference
+on Robot Learning, pages 2165–2183. PMLR, 2023.
+[23] Q. Vuong, S. Levine, H. R. Walke, K. Pertsch, A. Singh, R. Doshi, C. Xu, J. Luo, L. Tan,
+D. Shah, et al. Open x-embodiment: Robotic learning datasets and rt-x models. InTowards
+Generalist Robots: Learning Paradigms for Scalable Skill Acquisition@ CoRL2023, 2023.
+[24] S. Ye, J. Jang, B. Jeon, S. J. Joo, J. Yang, B. Peng, A. Mandlekar, R. Tan, Y .-W. Chao, B. Y .
+Lin, et al. Latent action pretraining from videos. InThe Thirteenth International Conference on
+Learning Representations, 2025.
+[25] Q. Bu, Y . Yang, J. Cai, S. Gao, G. Ren, M. Yao, P. Luo, and H. Li. Univla: Learning to act
+anywhere with task-centric latent actions.arXiv preprint arXiv:2505.06111, 2025.
+[26] Y . Chen, P. Li, Y . Huang, J. Yang, K. Chen, and L. Wang. Ec-flow: Enabling versatile
+robotic manipulation from action-unlabeled videos via embodiment-centric flow.arXiv preprint
+arXiv:2507.06224, 2025.
+[27] B. Han, J. Kim, and J. Jang. A dual process vla: Efficient robotic manipulation leveraging vlm.
+arXiv preprint arXiv:2410.15549, 2024.
+[28] Q. Bu, H. Li, L. Chen, J. Cai, J. Zeng, H. Cui, M. Yao, and Y . Qiao. Towards synergistic, gener-
+alized, and efficient dual-system for robotic manipulation.arXiv preprint arXiv:2410.08001,
+2024.
+[29] J. Bjorck, F. Castañeda, N. Cherniadev, X. Da, R. Ding, Y . Fang, D. Fox, F. Hu, S. Huang,
+J. Jang, et al. Gr00t n1: An open foundation model for generalist humanoid robots.CoRR,
+2025.
+10
+
+[30] C. Cui, P. Ding, W. Song, S. Bai, X. Tong, Z. Ge, R. Suo, W. Zhou, Y . Liu, B. Jia, et al.
+Openhelix: A short survey, empirical analysis, and open-source dual-system vla model for
+robotic manipulation.arXiv preprint arXiv:2505.03912, 2025.
+[31] C. Ling, X. Zhao, X. Zhang, W. Cheng, Y . Liu, Y . Sun, M. Oishi, T. Osaki, K. Matsuda, J. Ji, et al.
+Uncertainty quantification for in-context learning of large language models. InProceedings
+of the 2024 Conference of the North American Chapter of the Association for Computational
+Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 3357–3370, 2024.
+[32] Y . Fang, Z. Yang, Z. Chen, Z. Zhao, and J. Zhou. From uncertainty to trust: Enhancing
+reliability in vision-language models with uncertainty-guided dropout decoding.arXiv preprint
+arXiv:2412.06474, 2024.
+[33] S. Wang, L. Yu, C. Gao, C. Zheng, S. Liu, R. Lu, K. Dang, X. Chen, J. Yang, Z. Zhang, et al.
+Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for
+llm reasoning.arXiv preprint arXiv:2506.01939, 2025.
+[34] U. B. Karli, T. Kurumisawa, and T. Fitzgerald. Ask before you act: Token-level uncertainty
+for intervention in vision-language-action models. InSecond Workshop on Out-of-Distribution
+Generalization in Robotics at RSS 2025, 2025.
+[35] C. Li, J. Wen, Y . Peng, Y . Peng, F. Feng, and Y . Zhu. Pointvla: Injecting the 3d world into
+vision-language-action models.arXiv preprint arXiv:2503.07511, 2025.
+[36] F. Li, W. Song, H. Zhao, J. Wang, P. Ding, D. Wang, L. Zeng, and H. Li. Spatial forcing:
+Implicit spatial representation alignment for vision-language-action model.arXiv preprint
+arXiv:2510.12276, 2025.
+[37] J. Wang, M. Chen, N. Karaev, A. Vedaldi, C. Rupprecht, and D. Novotny. Vggt: Visual
+geometry grounded transformer. InProceedings of the Computer Vision and Pattern Recognition
+Conference, pages 5294–5306, 2025.
+[38] W. Song, Z. Zhou, H. Zhao, J. Chen, P. Ding, H. Yan, Y . Huang, F. Tang, D. Wang, and H. Li.
+Reconvla: Reconstructive vision-language-action model as effective robot perceiver.arXiv
+preprint arXiv:2508.10333, 2025.
+[39] X. Jia, B. Yang, Z. Ge, X. Nie, Y . Zhou, C. Fan, Y . Li, Y . Chai, C. Jing, Z. Liang, Q. Bu,
+H. Cao, C. Wu, Q. Li, Z. Yang, C. Zhang, H. Li, Z. Wu, J. Yan, and Y .-G. Jiang. Guidedvla:
+Specifying task-relevant factors via plug-and-play action attention specialization.arXiv preprint
+arXiv:2605.12369, 2026.
+[40] Y .-S. Chuang, Y . Xie, H. Luo, Y . Kim, J. R. Glass, and P. He. Dola: Decoding by contrasting
+layers improves factuality in large language models. InInternational Conference on Learning
+Representations, volume 2024, pages 54158–54183, 2024.
+[41] S. Farquhar, J. Kossen, L. Kuhn, and Y . Gal. Detecting hallucinations in large language models
+using semantic entropy.Nature, 630(8017):625–630, 2024.
+[42] nostalgebraist. Interpreting GPT: the logit lens. https://www.lesswrong.com/posts/
+AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens , August 2020. Accessed:
+2025-02-22.
+[43] N. Belrose, Z. Furman, L. Smith, D. Halawi, I. Ostrovsky, L. McKinney, S. Biderman, and
+J. Steinhardt. Eliciting latent predictions from transformers with the tuned lens.arXiv preprint
+arXiv:2303.08112, 2023.
+[44] W. Li, R. Zhang, R. Shao, J. He, and L. Nie. Cogvla: Cognition-aligned vision-language-action
+model via instruction-driven routing & sparsification.arXiv preprint arXiv:2508.21046, 2025.
+11
+
+[45] B. Liu, Y . Zhu, C. Gao, Y . Feng, Q. Liu, Y . Zhu, and P. Stone. Libero: Benchmarking knowledge
+transfer for lifelong robot learning.Advances in Neural Information Processing Systems, 36:
+44776–44791, 2023.
+[46] X. Li, K. Hsu, J. Gu, O. Mees, K. Pertsch, H. R. Walke, C. Fu, I. Lunawat, I. Sieh, S. Kirmani,
+et al. Evaluating real-world robot manipulation policies in simulation. InConference on Robot
+Learning, pages 3705–3728. PMLR, 2025.
+[47] O. Mees, L. Hermann, E. Rosete-Beas, and W. Burgard. Calvin: A benchmark for language-
+conditioned policy learning for long-horizon robot manipulation tasks.IEEE Robotics and
+Automation Letters, 7(3):7327–7334, 2022.
+[48] X. Li, M. Liu, H. Zhang, C. Yu, J. Xu, H. Wu, C. Cheang, Y . Jing, W. Zhang, H. Liu, et al.
+Vision-language foundation models as effective robot imitators. InThe Twelfth International
+Conference on Learning Representations, 2024.
+[49] Y . Wen, J. Lin, Y . Zhu, J. Han, H. Xu, S. Zhao, and X. Liang. Vidman: Exploiting implicit
+dynamics from video diffusion model for effective robot manipulation.Advances in Neural
+Information Processing Systems, 37:41051–41075, 2024.
+[50] W. Zhao, P. Ding, Z. Min, Z. Gong, S. Bai, H. Zhao, and D. Wang. Vlas: Vision-language-
+action model with speech instructions for customized robot manipulation. InThe Thirteenth
+International Conference on Learning Representations, 2025.
+[51] W. Song, J. Chen, X. Sun, H. Lei, Y . Qin, W. Zhao, P. Ding, H. Zhao, T. Wang, P. Hou, Z. Zhong,
+H. Yan, D. Wang, J. Ma, and H. Li. Rethinking the practicality of vision-language-action model:
+A comprehensive benchmark and an improved baseline.arXiv preprint arXiv:2602.22663,
+2026.
+[52] E. Coumans and Y . Bai. Pybullet, a python module for physics simulation for games, robotics
+and machine learning, 2016.
+[53] J. Yang, Y . Chen, Z. Wen, C. Cui, P. Li, Y . Xu, B. Fang, Y . Huang, and L. Wang. Dtpa:
+Dynamic token-level prefix augmentation for controllable text generation.arXiv preprint
+arXiv:2508.04047, 2025.
+[54] J. Yang, C. Cui, Y . Zhou, Y . Chen, P. Xia, Y . Wei, T. Yu, Y . Huang, and L. Wang. Ikod: Mitigating
+visual attention degradation in large vision-language models.arXiv preprint arXiv:2508.03469,
+2025.
+12
+
+Appendix
+A More Implementation Details 13
+A.1 Simulation Benchmarks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+A.2 Baselines and Setup . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+A.3 Real-World Setup . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+A.4 Ablation on Core Designs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+B More Experimental Results 16
+B.1 Ablation on Injection Timing and Location . . . . . . . . . . . . . . . . . . . . . . 16
+B.2 Visualizations of Simulation and Real-World Results . . . . . . . . . . . . . . . . 17
+C Theoretical Complexity Analysis 17
+A More Implementation Details
+A.1 Simulation Benchmarks
+LIBERO[ 45] is a language-conditioned manipulation benchmark that factorizes variation along
+four axes and evaluates policies under controlled shifts ofgeometry,object identity,goal intent,
+andtemporal horizon. The benchmark provides 4 suites—Spatial,Object,Goal, andLong—each
+containing 10 tasks with 50 human-teleoperated demonstrations per task, yielding a consistent
+protocol for training and evaluation. These suites focus on distinct reasoning capabilities:
+• LIBERO Spatialholds objects and goals fixed while perturbing placements and poses, stressing
+relational language parsing (e.g., left/right, front/behind) and viewpoint robustness.
+• LIBERO-Objectfixes scene layout but varies categories/attributes (type, shape, color), probing
+category-level generalization and attribute-aware grounding.
+• LIBERO-Goalkeeps geometry and objects constant while changing the intended outcome, testing
+fine-grained instruction disambiguation and goal-consistent action selection.
+• LIBERO-Longcomposes multiple atomic skills into extended procedures across diverse scenes,
+assessing sequential planning, error recovery, and long-horizon credit assignment.
+SIMPLER[ 46] is a simulated evaluation suite designed to mirror real-world manipulation with two
+complementary settings.Visual Matching (VM)aligns the simulated scene with its real counterpart
+(assets, layout, camera), enabling faithful assessment of policies in near-deployment conditions.
+Variant Aggregations (VA)perturbs the VM setup—varying background, lighting, distractors, and
+table textures—to stress-test robustness and out-of-distribution generalization. For theGoogle robot,
+both VM and V A include four canonical tasks: 1)Pick coke can; 2)Move near; and 3)Open/Close
+drawer, and 4)Open top drawer and place apple. For theWidowX robot, SIMPLER provides
+theVMsetting with four tasks: 1) Put spoon on towel, 2) Put carrot on plate, 3) Stack green block
+on yellow block, and 4) Put eggplant in yellow basket. Evaluation is reported as success rate over
+standardized rollouts for fair comparison across methods.
+CALVIN[ 47] is a long-horizon manipulation benchmark built on top of the PyBullet [52] simulator
+and involves a Franka Panda Robot arm that manipulates the scene. It comprises 34 tasks across four
+environments (A, B, C, and D) and over six hours of teleoperated play data per environment, captured
+from static and wrist-mounted RGB-D cameras together with tactile signals and proprioception.
+We adopt the classic and challenging CALVIN ABC →D evaluation protocol, where each model
+is assessed over 500 rollouts. We report both the overall success rate and the average number of
+successfully completed sub-tasks (i.e., average length).
+13
+
+A.2 Baselines and Setup
+In this section, we delve into the architectural details of the selected baselines and provide additional
+information on the experimental setup used throughout our evaluation.
+OpenVLA-OFT[ 7] is a high-performance VLA model derived from OpenVLA [5]. It incorporates
+parallel decoding with action chunking, continuous action representation, and an L1 regression
+objective, leading to substantial improvements in both task performance and inference speed. In
+our experiments, we use the OpenVLA-OFT variant trained with multimodal inputs consisting of
+two images (a third-person image and a wrist camera image), the robot’s proprioceptive state, and a
+language instruction. Specifically, the visual and proprioceptive features are concatenated to form
+the observation features, which are then injected into the Feed-Forward Network (FFN) layers of
+the language model following our UAOR mechanism. And we compute the action entropy based
+on all action tokens within the action chunk. We use the hidden states corresponding to the last
+Na = 8×7 = 56 (action chunk size H= 8 , action dimension Da = 7) tokens (i.e., positions
+[−57 :−1]) before the final stop token (“</s>”) to measure the uncertainty.
+π0 [6] employs a flow matching-based architecture built upon the PaliGemma VLM (3B). It processes
+multimodal inputs (images and language instructions) through the VLM backbone to generate context
+embeddings (specifically, the Key-Value cache), which then condition a separate action expert for
+continuous action generation. For the adaptation of our approach, we employ the officially released
+PyTorch codebase and the corresponding model checkpoints. In our experiments, we inject the visual
+features into the Feed-Forward Network (FFN) layers of the PaliGemma backbone. Since the flow
+matching head operates in continuous space and does not output discrete action probabilities, we
+compute the entropy based on thelast tokenof the VLM’s prefix processing (i.e., position [−1]). This
+metric reflects the backbone’s semantic uncertainty regarding the current observation and instruction
+context before the denoising phase. Consequently, we setN a = 1in Eq. 5 for this architecture.
+CogACT[ 21] adopts a componentized dual-system architecture that decouples perception and control.
+It uses the Prismatic VLM (7B) to extract a cognition token, which conditions a diffusion-based action
+expert for generating precise actions. CogACT demonstrates state-of-the-art results on the SIMPLER
+benchmark. In our implementation, since CogACT does not utilize proprioceptive input (i.e., robot
+joint states), we treat only the visual observation (third-person image) as the modality for observation
+reinjection. Additionally, we compute the action entropy solely based on the generated cognition
+token (i.e., positions [−1]), which serves as the intermediate representation linking perception and
+action. Therefore,N a = 1in Eq. 5 for this setup.
+LLaV A-VLA[51] is built on the widely adopted vision-language model LLaV A [ 1], exhibiting
+stable performance across both simulated and real-world environments. The lightweight variant
+LLaV A-VLA-0.5b achieves performance comparable to its 7B counterpart based on LLaV A, while
+incurring significantly lower computational overhead. It incorporates two images (static image and
+gripper image) and proprioception as input, which we combine as the supplemental observation cues.
+While LLaV A-VLA adopts action chunking, unlike OpenVLA-OFT, it does not employ parallel
+decoding and thus generates only one action token per step. Therefore we utilize the last token (i.e.,
+positions[−1],N a = 1) to compute action entropy and uncertainty.
+For other baseline methods compared in the main text, we list them for reference and encourage
+readers to refer to the original papers for further details.
+Hyperparameter Selection Strategy.We adopt a heuristic strategy to determine the hyperparameters
+γ (uncertainty threshold) and α (blending factor). We begin by analyzing the uncertainty curves
+(see Figure 1) to obtain a coarse estimate, initially setting γ= 0.80 for all task suites in LIBERO.
+Under this preliminary setting, we search for the optimal α and find that α= 0.05 yields the best
+performance across all four LIBERO task suites. Fixing α, we then refine γ for each individual
+task by performing a local search around the initial estimate. This progressive narrowing of the
+search space significantly reduces the tuning overhead while ensuring strong empirical results. We
+14
+
+Table 6: UAOR hyperparameters on simulation and real-world benchmarks
+Benchmark Base Model Task / Suiteγ α
+LIBERO
+OpenVLA-OFT
+Spatial 0.75 0.05
+Object 0.80 0.05
+Goal 0.75 0.05
+Long 0.80 0.05
+π 0
+Spatial 0.20 0.05
+Object 0.20 0.05
+Goal 0.20 0.05
+Long 0.20 0.05
+SIMPLER CogACT
+Pick coke can 0.80 0.05
+Move near 0.80 0.05
+Open/Close drawer 0.80 0.05
+Open top drawer and place apple 0.70 0.05
+CALVIN LLaV A-VLA ABC→D 0.85 0.06
+Real-World
+OpenVLA-OFT
+Close upper drawer 0.75 0.05
+Put the redbull on the plate 0.80 0.05
+Put the lion on the top shelf 0.80 0.05
+Stand the coke can up 0.80 0.05
+CogACT
+Close upper drawer 0.80 0.05
+Put the redbull on the plate 0.80 0.05
+Put the lion on the top shelf 0.80 0.05
+Stand the coke can up 0.80 0.05
+Table 7: OpenVLA-OFT hyperparameters for real-world fine-tuning.
+Hyperparameter Value
+# GPUs 8 x NVIDIA 4090 (24GB VRAM)
+learning rate (LR) 5e-4
+total batch size 8 (1 per GPU)
+# train steps 150K
+input images 1 third-person camera image
+input image size 224 x 224 px
+use observation history no (use single-step inputs)
+LoRA rank 32
+action chunk size 8 steps (predict 8, execute all 8 open-loop at test time)
+use proprio (robot state) yes
+use FiLM no
+use the strategy to determine the final hyperparameter settings for both simulation and real-world
+experiments, as summarized in Table 6.
+A.3 Real-World Setup
+Figure 4 illustrates our real-robot setting. The platform comprises a 7-DoF Franka Research 3 robot
+arm with a parallel-jaw gripper and a ZED 2i stereo camera mounted on a tripod. We collect expert
+trajectories with a 3D mouse to enable fine-grained and precise manipulation. The four tasks we
+designed are detailed as follows:
+• Close the upper drawer.The robot is required to approach the cabinet, locate the upper drawer,
+and execute a pushing motion to close it fully.
+• Put the redbull on the plate.The robot needs to identify the Red Bull can, grasp it securely, and
+place it on the designated plate area with proper orientation.
+• Put the lion on the top shelf.The robot should pick up the toy lion from the workspace and
+accurately place it onto the top shelf.
+15
+
+Table 8: CogACT hyperparameters for real-world fine-tuning.
+Hyperparameter Value
+# GPUs 8 x NVIDIA A100 (80GB VRAM)
+learning rate (LR) 2e-5
+total batch size 8 (1 per GPU)
+input images 1 third-person camera image
+input image size 224 x 224 px
+VLM backbone Prism-DinoSigLIP-224px
+action model type DiT-B (Diffusion Transformer Base)
+diffusion steps 8 (repeated steps)
+image augmentation True
+action chunk size 16 steps (predict 16, execute all 16 open-loop at test time)
+• Stand the coke can up.The robot must perform a complex sequence of actions to pick up a
+horizontally lying cup, reorient it upright, and place it stably on its base.
+We fine-tune both OpenVLA-OFT and CogACT on each task using 50 expert trajectories collected
+with a 3D spacemouse. The training hyperparameters for OpenVLA-OFT and CogACT are detailed
+in Table 7 and Table 8, respectively.
+A.4 Ablation on Core Designs
+In this section, we provide more details about the ablation study on the core designs of UAOR,
+corresponding to Table 4 in the main text.
+Feature Extractors.
+Mean Pooling:Blends the mean-pooled observation features with the FFN output using a coefficient
+α (h′ = (1−α)h+α o mean, where h is the original FFN output and omean is the mean-pooled
+observation). It serves as a soft skip-connection baseline. Since the observation tokens and the
+hidden states differ in sequence length, element-wise addition (standard ResNet-style) is not directly
+possible; we therefore aggregate observation features via mean pooling for this baseline.
+Attention Retrieval (UAOR):Blends the observation features relevant to the current hidden state
+via an FFN-like key-value retrieval (Eq. 7), where each observation token receives a query-dependent
+weight rather than a uniform one.
+Trigger Policies. All Layers (All)injects observation features at every layer of the LLM backbone.
+Random Layers (Random)selects a subset of layers uniformly at random for each inference step.
+To ensure a fair comparison, the number of selected layers matches the average number of layers
+triggered by the Entropy policy (e.g., approximately 30% for LIBERO-Spatial, Object, and Goal, and
+20% for LIBERO-Long).Entropy-based (Entropy)dynamically triggers injection only at layers
+whose action-entropy uncertainty exceeds the thresholdγ, targeting moments of high uncertainty.
+B More Experimental Results
+B.1 Ablation on Injection Timing and Location
+To validate the rationale behind our specific design choices—namely, the “one-layer delay” strategy
+and the selection of the Feed-Forward Network (FFN) as the injection site—we conduct a detailed
+ablation study comparing different injection timings and module locations on the LIBERO benchmark
+based on OpenVLA-OFT. The results are summarized in Table 9.
+(1) Why “One-Layer Delay”? (Efficiency & Effectiveness).We compare injecting into theCurrent
+Layer(ℓ) versus our proposedNext Layer(ℓ+ 1) strategy.
+• Effectiveness:As shown in Table 9, injecting into theCurrent FFN(97.7%) andNext FFN(98.0%)
+yields comparable performance. This is because the underlying operation is mathematically
+16
+
+Table 9: Ablation on Injection Timing and Location on LIBERO based on OpenVLA-OFT.
+Injection Timing Injection Module Success Rate (%) Latency Overhead
+Spatial Object Goal Long Avg.
+-Baseline (No Injection)98.2 98.2 97.6 94.2 97.1 0.161s -
+Current Layer (ℓ) Self-Attention (SA) 98.2 98.0 97.8 95.8 97.5 0.195s +21.1%
+Current Layer (ℓ) Feed-Forward (FFN) 98.6 98.2 98.0 95.8 97.7 0.182s +13.0%
+Next Layer (ℓ+ 1) Self-Attention (SA) 98.4 98.0 97.8 94.8 97.3 0.170s +5.6%
+Next Layer (ℓ+ 1) Feed-Forward (UAOR) 99.0 98.4 98.2 96.2 98.0 0.169s +5.0%
+identical (using the FFN’s input to retrieve observation features and blending them with the original
+output). The slight edge forNext Layermay stem from using more processed hidden states as the
+queries.
+• Efficiency:Despite similar success rates, theCurrent Layerstrategies incur significantly higher
+computational overhead. Injecting into the current FFN requires fetching the cached FFN input
+from memory to perform retrieval, introducingMemory I/O overheadand pipeline stalls ( 0.182s,
++13.0%). Injecting into the current Self-Attention (SA) is even costlier ( 0.195s, +21.1%) as
+modifying the SA output necessitates are-computationof the subsequent FFN block. In contrast,
+ourNext Layerdesign allows for a seamless “look-ahead” injection without backtracking or
+re-computation, achieving the optimal efficiency (0.169s,+5.0%).
+(2) Why FFN over Self-Attention?ComparingNext Layer FFN( 98.0%) withNext Layer SA
+(97.3%) confirms that the FFN is the superior injection site. We hypothesize the reasons as follows:
+FFNs structurally function asKey-Value Memories[ 17, 18], making them the natural component
+for retrieving and storing external information (observation). In contrast, Self-Attention focuses on
+token-to-token contextualization; injecting external features there may dilute the attention distribution,
+leading to slightly inferior performance.
+B.2 Visualizations of Simulation and Real-World Results
+We present additional qualitative results in both simulation and real-world settings to showcase the
+effectiveness of UAOR. All experiments are conducted within the OpenVLA-OFT framework. As
+illustrated in Figure 6 and Figure 7, the model successfully completes diverse multi-stage manipu-
+lation tasks under varying object configurations and instruction formulations. Benefiting from the
+uncertainty-aware reinjection mechanism, UAOR helps the model maintain focused attention on
+key observations during inference, enhancing scene understanding and decision confidence. These
+visualizations highlight the practicality and adaptability of our method in robotic manipulation.
+C Theoretical Complexity Analysis
+For simplicity, we only consider the computational overhead of the Multi-Head Self-Attention
+(MHSA) and Feed-Forward Network (FFN) blocks in a language model backbone. Let L, N, and D
+denote the number of transformer layers, the length of the token sequence, and the hidden dimension,
+respectively. Following prior works [18, 53, 54], the floating-point operations (FLOPs) for MHSA
+and FFN in one layer are approximately 8N D2 + 4N2D and 16N D2, respectively. Thus, the total
+FLOPs of the language model backbone are:
+FLOPsLM ≈L·
+
+(8N D2 + 4N2D) + 16N D2
+=L·(24N D 2 + 4N2D).(8)
+The additional computational overhead introduced by UAOR consists of two parts: (1) theprojection
+costto compute action entropy, and (2) thereinjection costwhen uncertainty exceeds the threshold.
+Projection Cost.To compute the action entropy, we project the hidden states of action-related tokens
+into the vocabulary space using the pre-trained LM head. Let Na denote the number of action-related
+tokens per step and Dv the vocabulary size. Since we perform this projection at every layer except
+the last (where we don’t need to reinject at the next layer as it is just the last year), the additional
+17
+
+FLOPs are:
+FLOPsPROJ = (L−1)·2N aDDv.(9)
+Reinjection Cost.When triggered, UAOR acts as an additional FFN-like module comprising a
+retrieval operation. It involves two linear transformations (Query-Key and Attention-Value) with
+shared weights. Let No be the number of observation tokens. The cost for a single reinjection is
+FLOPsSINGLE_INJ ≈4N N oD. Assuming the reinjection is triggered in Lγ layers (where uncertainty
+u > γ), the total reinjection cost is:
+FLOPsINJ =L γ ·4N N oD.(10)
+Total Overhead Ratio.We quantify the additional computational burden using the ratior cost:
+rcost = FLOPsPROJ +FLOPs INJ
+FLOPsLM
+≈ (L−1)·2N aDDv
+L·(24N D 2 + 4N2D)| {z }
+Projection term
++ Lγ ·4N N oD
+L·(24N D 2 + 4N2D)| {z }
+Reinjection term
+.(11)
+Note that we approximate the denominator by the dominant term 24N D2 (since D≫N ) for clarity.
+Simplifying the terms yields:
+rcost ≈ NaDv
+12N D + Lγ
+L · No
+6D .(12)
+Case Study.We analyze the overhead for two representative VLA models, OpenVLA-OFT [7] and
+CogACT [21], using the Llama-2-7B backbone (D= 4096, D v = 32000).
+• OpenVLA-OFT: With sequence length N≈600 and action tokens Na = 56, the projection
+overhead is ≈ 56×32000
+12×600×4096 ≈6.0% . On LIBERO-Long, the statistical trigger rate is Lγ
+L ≈20% .
+With observation tokens No = 513, the reinjection overhead is 0.2× 513
+6×4096 ≈0.4% . The total
+overhead is roughly6.4%.
+• CogACT: With N≈300 and Na = 1 (predicting one condition token per step), the projection
+overhead drops significantly to ≈ 1×32000
+12×300×4096 ≈0.2% . Assuming a similar trigger rate, the total
+overhead remains negligible at<1%.
+This analysis confirms that UAOR is computationally efficient, particularly for those VLA models
+that generate one action-related token per step, and introduces minimal latency compared to the heavy
+backbone computation.
+Table 10: Inference overhead of UAOR
+on OpenVLA-OFT (LIBERO-Long, 500
+rollouts).Throughput: generated actions
+per second;Latency: time per step.
+Method Throughput↑Latency↓
+OpenVLA-OFT 49.7 Hz 0.161 s
+w/UAOR 47.3 Hz 0.169 s
+∆−4.8% +5.0%
+Empirical Validation.We further test the actual run-
+time overhead through empirical experiments. Specifi-
+cally, we run 500 rollouts on the LIBERO-Long bench-
+mark using OpenVLA-OFT. As shown in Table 10, ap-
+plying UAOR results in only a slight throughput drop
+from 49.7 Hz to 47.3 Hz ( −4.8%), and a marginal la-
+tency increase from 0.161 s to 0.169 s (+5.0%). These
+results indicate that UAOR introduces negligible com-
+putational overhead in practice, consistent with the the-
+oretical estimates above.
+18
+
+LIBERO-Goal: open the middle drawer of the cabinet
+LIBERO-Goal: put the wine bottle on the rack
+LIBERO-Long: put both the alphabet soup and the tomato sauce in the basket
+LIBERO-Long: put the yellow and white mug in the microwave and close it
+LIBERO-Object: pick up the alphabet soup and place it in the basket
+LIBERO-Object: pick up the orange juice and place it in the basket
+LIBERO-Spatial: pick up the black bowl from table center and place it on the plate
+LIBERO-Spatial: pick up the black bowl on the wooden cabinet and place it on the plate
+Figure 6:Manipulation Visualizations in the LIBERO Simulation Environment.We present
+the execution processes of OpenVLA-OFT with UAOR across LIBERO-Spatial, LIBERO-Object,
+LIBERO-Goal, and LIBERO-Long, demonstrating its strong performance under diverse instructions
+and a wide range of tasks. Each row shows a temporally ordered sequence from left to right.
+19
+
+Instruction: Close the upper drawer
+Instruction: Stand the coke can up
+Instruction: Put the redbull on the plate
+Instruction: Put the lion on the top shelf
+Figure 7:Manipulation Visualizations in the Real-World Environment.We present the execution
+processes of OpenVLA-OFT with UAOR across four real-world tasks, demonstrating its strong
+effectiveness and practicality in real-world scenarios. Each pair of rows shows a temporally ordered
+sequence from left to right.
+20

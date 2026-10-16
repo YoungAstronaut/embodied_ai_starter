@@ -1,0 +1,1295 @@
+Learning Invariant Visual Representations for Planning with
+Joint-Embedding Predictive World Models
+Leonardo F. Toso* 1 Davit Shadunts * 1 Yunyang Lu* 1 Nihal Sharma 2 Donglin Zhan 1
+Nam H. Nguyen 2 James Anderson 1
+Abstract
+World models learned from high-dimensional vi-
+sual observations allow agents to make decisions
+and plan directly in latent space, avoiding pixel-
+level reconstruction. However, recent latent pre-
+dictive architectures (JEPAs), including the DINO
+world model (DINO-WM), display a degradation
+in test time robustness due to their sensitivity to
+“slow features”. These include visual variations
+such as background changes and distractors that
+are irrelevant to the task being solved. We ad-
+dress this limitation by augmenting the predic-
+tive objective with a bisimulation encoder that en-
+forces control-relevant state equivalence, mapping
+states with similar transition dynamics to nearby
+latent states while limiting contributions from
+slow features. We evaluate our model on a sim-
+ple navigation task under different test-time back-
+ground changes and visual distractors. Across
+all benchmarks, our model consistently improves
+robustness to slow features while operating in a
+reduced latent space, up to 10× smaller than that
+of DINO-WM. Moreover, our model is agnostic
+to the choice of pretrained visual encoder and
+maintains robustness when paired with DINOv2,
+SimDINOv2, and iBOT features.
+1. Introduction
+Constructing spatial and temporal models of the world to
+predict future outcomes and guide decisions is a crucial capa-
+bility of the human brain (Shadmehr & Mussa-Ivaldi, 2012).
+In machine learning, this is mirrored through world models
+that are learned from high-dimensional visual observations,
+enabling efficient prediction, planning, and control by rea-
+soning over learned latent dynamics rather than raw sensory
+inputs. Planning with such a “compressed” representation
+of the environment dynamics has become a cornerstone of
+*Equal contribution 1Department of Electrical Engineering,
+Columbia University, New York, USA.2Capital One, USA. Corre-
+spondence to: Leonardo F. Toso <leonardo.toso@columbia.edu>.
+contemporary robotics (Ha & Schmidhuber, 2018; Hafner
+et al., 2020; Zhou et al., 2025), model-based reinforcement
+learning (RL), and control (Hafner et al., 2019; 2021; Ebert
+et al., 2018; Thuruthel et al., 2018; Matsuo et al., 2022;
+Khorrambakht et al., 2025) as it provides data efficiency and
+generalization across tasks while avoiding online interaction
+and visual reconstruction (Sobal et al., 2025).
+An impactful line of recent work centers on Joint Embed-
+ding Predictive Architectures (JEPAs), which eschew recon-
+struction of raw observations in favor of learning represen-
+tations by predicting future latent embeddings (Grill et al.,
+2020; Caron et al., 2021; LeCun, 2022; Assran et al., 2023;
+Sobal et al., 2025; Balestriero & LeCun, 2025). Building on
+JEPAs, the DINO world model (DINO-WM) (Zhou et al.,
+2025) learns a latent predictive dynamic by encoding visual
+observations through a pretrained DINOv2 feature extractor
+(Oquab et al., 2023). This yields zero-shot planning, with a
+pretrained, reward-free world model on entirely new tasks.
+Despite their empirical success, JEPAs suffer from a fun-
+damental limitation: they pay too much attention toslowly
+changingandtask-irrelevant features(LeCun, 2022; Sobal
+et al., 2022). These slow features refer to aspects of the raw
+observations that change gradually over time, but are irrel-
+evant for planning, such as background textures, lighting,
+camera viewpoints, and distractors. In the presence of slow
+features, the predictive objective in JEPA can be minimized
+by encodingonlysuch temporally consistent information,
+yielding degenerate solutions. As a result, world models
+trained under fixed visual conditions often fail to generalize
+when the background changes at test time (despite identi-
+cal underlying object dynamics). This limitation has been
+discussed in (Sobal et al., 2022) for JEPAs and empirically
+observed to be true for DINO-WM (Figure 2-(Right)).
+Importantly, this limitationcannotbe fully resolved by
+larger visual foundation models alone (such as DINOv2
+(Oquab et al., 2023), SimDINOv2 (Wu et al., 2025), iBOT
+(Zhou et al., 2021), masked autoencoders (He et al., 2022),
+among others) as they also extract control-irrelevant infor-
+mation. Even with invariant perception modules, the learned
+latent dynamics may still entangle control-relevant states
+with nuisance visual features, leading to brittle planning
+1
+arXiv:2602.18639v1  [cs.LG]  20 Feb 2026
+
+Learning Invariant Visual Representations for Planning with JEPAs
+under visual distribution shifts at test time. Ideally, a world
+model should encode only those aspects of the state that are
+relevant for predicting future states, while being invariant to
+task-irrelevant visual factors.
+Question.Can we learn latent world models that retain
+the joint-embedding predictive strengths while also
+being robust to the slow features?
+We address this question using bisimulation metrics for
+learning invariant representations on top of pretrained vi-
+sual feature extractors (i.e., DINOv2, SimDINOv2, iBOT).
+These metrics define state equivalences based on immediate
+rewards and transition dynamics, and have been studied as
+a principled foundation for state abstraction in Markov De-
+cision Processes (MDPs) (Ferns et al., 2004; Castro et al.,
+2009), transfer learning (Castro & Precup, 2010), and invari-
+ant representation learning (Zhang et al., 2021; Kemertas
+& Aumentado-Armstrong, 2021; Tkachev & Abate, 2011;
+Shimizu & Tomizuka, 2025). By construction, encoders
+trained with a bisimulation regularizer discard nuisance fea-
+tures that do not affect control, making it a natural candidate
+for addressing the slow-feature limitation of JEPAs.
+Key Point.DINO-WM (Zhou et al., 2025) displays
+a substantial degradation in performance on relatively
+simple navigation tasks (e.g., PointMaze (Fu et al.,
+2020)) when evaluated under background changes and
+visual distractors at test time (see Figure 2-(Right)).
+To address this, we propose abisimulation encoder
+for visual world models that augments latent dynam-
+ics with an on-policy bisimulation objective, enforcing
+invariance in the learned latent space. The bisimula-
+tion encoder is trained jointly with the transition model,
+enforcing states with similar transition behavior to be
+mapped to nearby latent embeddings while discarding
+task-irrelevant visual information (see Figure 1). Im-
+portantly, we also show that explicit reward prediction
+is not fundamental to learning invariant world-model
+representations, thereby simplifying training.
+Contributions.Our main contributions are as follows:
+• We propose a bisimulation encoder for visual world mod-
+els that enforces control-relevant state equivalence while
+discarding task-irrelevant visual features from pretrained vi-
+sual feature extractors (e.g., DINOv2, SimDINOv2, iBOT).
+• We integrate the bisimulation objective into a latent predic-
+tive world model architecture (see Figure 2-(Left)), showing
+that invariant representations can be learned jointly with the
+transition modelwithoutrelying on reward prediction.
+• We show that our bisimulation encoder yields robust plan-
+ning performance under several background changes and a
+moving distractor for a navigation task, with latent embed-
+dings dimensions that are10×smaller than DINO-WM.
+• We validate our model with three different pretrained vi-
+Figure 1. Visually distinct observations that differ only in back-
+ground (checkerboard and gradient) are first mapped to latent
+embeddings Z and Z ′ by a pretrained encoder (initial state in
+green, goal in red). A bisimulation encoder then projects these
+into lower-dimensional representations W and W ′, which are
+equivalent under on-policy transition dynamics. In contrast, an
+observation with different underlying dynamics is mapped to ˜W
+and separated in the bisimulation space.
+sual encoder backbones: DINOv2, SimDINOv2, and iBOT,
+namely, and show consistent robustness over slow features
+when compared to DINO-WM (Zhou et al., 2025) both with
+and without domain randomization (Tobin et al., 2017).
+2. Related Work
+• Joint embedding predictive architectures (JEPAs).
+Joint embedding predictive architectures learn feature rep-
+resentations by predicting future latent states rather than
+reconstructing observations (Grill et al., 2020; Caron et al.,
+2021; LeCun, 2022; Assran et al., 2023; Sobal et al., 2025;
+Balestriero & LeCun, 2025). Most relevant to our work is
+DINO-WM (Zhou et al., 2025) that learns latent dynamics
+directly in the space of pretrained DINOv2 visual features
+(Oquab et al., 2023), avoiding pixel-level reconstruction.
+However, latent prediction in DINO-WM remains sensitive
+to slow, control-irrelevant features. We address this limita-
+tion by augmenting the predictive objective with a bisimula-
+tion encoder to enforce control-relevant invariances.
+• Bisimulation metrics and invariant representations.
+Bisimulation provides a principled way of behavioral equiv-
+alence in MDPs by quantifying approximate equivalence
+through reward discrepancies and mismatches in future state
+distributions for different states under the same policy (Ferns
+et al., 2011; Abate, 2013). Most relevant to our work is BS-
+MPC in (Shimizu & Tomizuka, 2025), which incorporates a
+bisimulation metric loss for model predictive control (Kou-
+varitakis & Cannon, 2016; Lenz et al., 2015; Williams et al.,
+2017). In contrast to (Shimizu & Tomizuka, 2025), we lever-
+age bisimulation metrics to “filter out” control-irrelevant
+information from a pretrained feature space (e.g., that of
+DINOv2, SimDINOv2, iBOT). Moreover, we jointly train
+our prediction model without relying on reward prediction.
+• Model-based control with latent world models.Model-
+based RL with world models enable planning by rolling out
+2
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Figure 2. Left.Model architecture and training objectives. Visual observations are encoded using a frozen pretrained visual encoder,
+followed by a bisimulation encoder that maps features into a low-dimensional, control-relevant latent space. The bisimulation loss is
+trained jointly with the latent transition model, enforcing invariance to task-irrelevant visual features.Right.Rollouts for PointMaze
+navigation under a background change at test time. For clarity, the background change is not depicted in the figure. See Section 5.3 for
+details on background changes. While DINO-WM fails to reach the goal due to background change our model succeeds.
+learned dynamics in a compact latent space, which has been
+effective for high-dimensional tasks (Ha & Schmidhuber,
+2018; Hafner et al., 2019; 2020). In robotics, latent dy-
+namics models are commonly paired with sampling-based
+optimizers for action selection, including the cross-entropy
+method (CEM), which is widely used for planning with
+learned world models (Rubinstein & Kroese, 2004; Zhou
+et al., 2025). Our control stack follows this line, we plan
+with CEM with the learned latent dynamics, and focus on
+the representation learning side, i.e., how to learn a latent
+space that is robust to slow features so that planning remains
+reliable under visual distribution shifts in test time.
+3. Preliminaries
+We now introduce the notation and preliminaries on JEPAs,
+bisimulation metrics, and invariant representation learning.
+Throughout, we consider a vision-based control task given
+by a partially observable MDP (POMDP) that evolves in
+discrete time t∈ {0,1,2, . . .} . An observation is an RGB
+image ot ∈ O , an action is denoted by at ∈ A , and a tra-
+jectory is a sequence (ot, at, ot+1, at+1, . . .). We denote
+the data distribution induced by a behavior policy π by Dπ,
+meaning that (ot, at, ot+1)∼ D π when rollouts are gener-
+ated by playing the environment with π. We use EDπ [·] to
+denote the expectation with respect to this data distribution.
+3.1. Joint-Embedding Predictive Architectures
+JEPAs learn a visual encoder fθ :O →R dz that maps an
+observation ot to a latent embedding, i.e., zt =f θ (ot)∈
+Rdz , where dz is the embedding dimension and θ is the
+vector of encoder parameters. Jointly, a predictor (i.e., latent
+dynamics model) ˜Tϕ :R dz × A →R dz is trained to map
+the current latent state and action to a predicted next latent
+stateˆzt+1 = ˜Tϕ (zt, at),with parametersϕ.
+Since representations are defined up to arbitrary invertible
+transformations, JEPA training includes a target embedding.
+The target is denoted by zt+1 =f θ (ot+1). The JEPA objec-
+tive minimizes the prediction loss betweenˆzt+1 andz t+1,
+Lpred (θ, ϕ) =E Dπ
+h
+ℓ
+
+˜Tϕ (fθ (ot), a t), f θ (ot+1)
+i
+,(1)
+whereℓ:R dz ×R dz →R + is the mean squared error.
+We emphasize that DINO-WM (Zhou et al., 2025), follow
+this principle, with the key distinction that the visual en-
+coder parameters θ are fixed and not learned during training.
+Therefore, observations are first mapped to latent embed-
+dings using a pretrained visual foundation model (e.g., DI-
+NOv2 (Oquab et al., 2023)), and a predictive dynamics
+model is trained on top of that latent space. Here, we also
+treat the pretrained visual encoder as fixed and train an extra
+bisimulation encoder jointly with the dynamics on top of it.
+Remark3.1 (Slow Features).We emphasize that JEPAs in-
+advertently focus on the slow features. In particular, when
+observations contain static backgrounds or persistent dis-
+tractors that vary slowly relative to task-relevant dynamics,
+the prediction loss (1) can be minimized by encoding such
+features into the latent embedding zt =f θ(ot), since they
+induce small temporal differences ∥zt+1 −z t∥. As a re-
+sult, slowly varying nuisance information may dominate
+the predictive objective, leading to latent embeddings that
+fail to capture the underlying task structure (Sobal et al.,
+2022) and thus are not generalizable to background changes
+at test time (see Figure 2-(Right)). This limitation moti-
+vates the use of bisimulation. By defining latent distances in
+terms of on-policy transition behavior, bisimulation induces
+representations that collapse nuisance visual features while
+preserving the task-relevant information for planning.
+3.2. Bisimulation Metric
+Let us now (informally) revisit the definition of on-policy
+bisimulation metrics from (Castro, 2020). Intuitively, two
+latent states, in the pretrained visual encoder space, z and z′
+are “bisimilar” if they induce similar immediate rewards (for
+optimality equivalence) and similar future state evolution
+(for dynamics equivalence) under the same actions.
+Here, the environment is partially observed and represented
+through latent embeddings obtained from a visual encoder
+3
+
+Learning Invariant Visual Representations for Planning with JEPAs
+(e.g., DINOv2, SimDINOv2, iBOT). The goal is to learn a
+lower-dimensional representation w=h η(z)∈R dw, with
+dw ≪d z, that preserves control-relevant structure while
+discarding nuisance visual variation. We formalize state
+equivalence with theon-policybisimulation metric.
+Definition 3.2(On-Policy Bisimulation Metric (Castro,
+2020)).Given a policy π, a reward function r(z, a), and
+a transition kernel Pπ(· |z) induced by π, the on-policy
+bisimulation metric is
+dπ(z, z′) =|r π(z)−r π(z′)|| {z }
+reward similarity
++γ W1 (Pπ(· |z), P π(· |z ′))| {z }
+dynamics similarity
+,
+where rπ(z) =E a∼π(·|z)[r(z, a)], γ∈(0,1) is a discount
+factor, andW 1 denotes the1-Wasserstein distance.
+On Dropping the Reward Term.Note that dπ(z, z′)
+has two terms: a reward similarity term|rπ(z)−r π(z′)|
+and a dynamics similarity term measured via the 1-
+Wasserstein distance (Givens & Shortt, 1984). The
+reward term ensures that if two state trajectories are
+similar, they are not collapsed if they yield different
+rewards. In particular, such reward discrepancy is cru-
+cial when bisimulation is used for policy transfer or
+value-function approximation (Ferns et al., 2004; Cas-
+tro et al., 2009; Castro & Precup, 2010). However,
+for the purpose of learning an invariant representation
+for JEPAs, we claim that this term is not fundamen-
+tal. This is because the transition term alone induces
+a meaningful notion of equivalence: states that exhibit
+similar evolution under the same action sequences are
+mapped to nearby representations in the bisimulation
+latent space (see the illustration in Figure 1)
+Moreover, dropping the reward term is well aligned with
+JEPAs, which are inherently reward-free and focus on pre-
+dictive consistency in latent space. Incorporating rewards
+would require task-specific supervision and would break the
+modularity between representation learning and zero-shot
+downstream planning. Accordingly, we omit the reward
+term in our implementation and rely only on approximating
+the Wasserstein transition similarity to enforce invariance.
+This design choice is further supported numerically in Sec-
+tion 5, where a reward predictor is included.
+3.3. Learning Invariant Representations
+Now, we discuss the invariant representation learning prob-
+lem for our joint-embedding predictive world model. Recall
+that zt =f θ (ot)∈R dz typically contains both control-
+relevant information and nuisance features. Our goal is
+to learn an encoder wt =h η (zt)∈R dw , that limits the
+contribution of the slow features in the transition dynamics.
+To do so, we jointly learn the dynamics in the bisimula-
+tion space through Tϕ :R dw × A →R dw , such that
+ˆwt+1 =T ϕ (wt, at) predicts the next latent state. With
+the notation set up in Section 3.1, we have the predictive
+dynamics augmented with the bisimulation encoder, i.e.,
+Tϕ(hη(fθ(ot)), at), where againθis fixed.
+To connect invariance to bisimulation, we consider an ab-
+stract state space W ⊆R dw equipped with the metric dπ.
+We aim to learn hη and Tϕ jointly so that the distances in
+W approximate an on-policy bisimulation metric, meaning
+that states that are equivalent for control under rollouts are
+mapped nearby in such latent space. We do this by opti-
+mizing a bisimulation objective that aligns pairwise latent
+distances with a target quantity that compares on-policy
+dynamics. Concretely, for a pair of observation, action,
+and next observation (ot, at, ot+1) and
+
+o′
+t, a′
+t, o′
+t+1
+
+drawn
+fromD π, we have the latent states
+zt =f θ (ot), z ′
+t =f θ (o′
+t)| {z }
+Pretrained latents
+, w t =h η (zt), w ′
+t =h η (z′
+t)| {z }
+Bisimulation latents
+.
+The transition dynamicsT ϕ is trained using
+Ldyn (η, ϕ)≜E Dπ
+h
+∥hη (fθ (ot+1))−T ϕ (hη (fθ (ot)), a t)∥2
+i
+,
+and we note that, in practice, as we do not have Dπ, we
+compute the empirical mean instead (i.e., MSE).
+On the other hand, for invariance, our loss encourages the
+distance ∥wt −w ′
+t∥2 to match a control-relevant similarity
+signal measured by the bisimulation metric. We define
+the on-policy one-step bisimulation target between states
+as ∆bisim(η, ϕ)≜γ∥T ϕ (wt, at)−T ϕ (w′
+t, a′
+t)∥2 , where
+it compares the predicted next latent states under the learned
+dynamics. We fit the bisimulation encoder by minimizing
+Lbisim (η, ϕ)≜E Dπ
+h
+(∥wt −w ′
+t∥2 −∆ bisim(η, ϕ))2i
+.
+Finally, we define the overall training objective as
+Ljepa−bisim (η, ϕ)≜L dyn (η, ϕ) +λ bisimLbisim (η, ϕ),(2)
+withλ bisim >0being the regularization weight.
+Minimizing the loss formalizes our goal of learning a com-
+pact latent space that preserves on-policy predictive struc-
+ture for planning while suppressing task-irrelevant visual
+features. We next describe the architecture, loss instantia-
+tion, and planning in the learned bisimulation space.
+4. Our World Model
+We now describe our architecture for learning invariant
+world models that builds on pretrained visual features (DI-
+NOv2, SimDINOv2, and iBOT) and augments them with
+a bisimulation encoder to suppress task-irrelevant informa-
+tion. The model learns latent transition dynamics and per-
+forms planning via MPC with CEM. An overview of the full
+pipeline and training objectives is shown in Figure 2-(Left).
+4
+
+Learning Invariant Visual Representations for Planning with JEPAs
+4.1. Pretrained Visual Encoders
+In our experiments, we consider three self-supervised visual
+encoders: DINOv2 (Oquab et al., 2023) (with ViT-S/14),
+SimDINOv2 (Wu et al., 2025) (with ViT-B/16), and iBOT
+(Zhou et al., 2021) (with ViT-S/16). These are trained on
+large-scale image datasets using joint embedding or masked
+prediction objectives and have been shown to produce se-
+mantically rich visual features (Jiang et al., 2023).
+These visual encoders arepatch-based, namely, fθ :O →
+RNp×dz, where Np is the number of patches. Most im-
+portantly, they are trained without access to the transition
+dynamics, actions and/or rewards, and thus capturegeneric
+visual features rather than control-relevant structure. In
+particular, they are not tailored for planning and are not
+fine-tuned to allow for visual shifts in test time. Our goal is
+to adapt their feature embeddings by learning an additional
+bisimulation encoder on top of{z t}t (see Figure 2-(Left)).
+When using DINOv2 features, we refer to our model as
+DINO-Bisim. Similarly, we use SimDINO-Bisim and iBOT-
+Bisim when paired with SimDINOv2 and iBOT visual fea-
+ture extractors, respectively.
+4.2. Bisimulation Encoder
+Given pretrained visual embeddings zt, we learn a bisim-
+ulation encoder hη :R Np×dz →R Np×dw , wt =h η(zt),
+as discussed in Section 3.2. We note that in contrast to
+(Zhang et al., 2021; Shimizu & Tomizuka, 2025), our bisim-
+ulation encoder is designed in patches (we refer the reader
+to Appendix A.1.3 for details). Such encoder consists of a
+per-patch residual MLP projection head (Linear-ResMLP-
+Linear) that maps each DINOv2 patch embedding (or raw
+image patch) into a dw = 32 dimensional latent, followed
+by learned spatial positional embeddings and LayerNorm.
+This encoder is trained to ensure that distances in the w-
+space reflect on-policy bisimulation distances, as defined
+in (2). To this end, weflattenthe spatial patch features
+prior to computing the previously defined losses and com-
+pare states across different trajectories that are stored in
+areplay buffer, following (Zhang et al., 2021). However,
+minimizing the bisimulation loss admits degenerate solu-
+tions as mapping all states to a single representation trivially
+minimizes pairwise distances, and we refer to this as the
+representationcollapse. To circumvent such collapse, prior
+work (Bardes et al., 2021; Zhu et al., 2023) has adopted
+variance-invariance-covariance regularization (VICReg) to
+guarantee that each latent dimension keeps sufficient vari-
+ance over batches of states. We refer the reader to (Bardes
+et al., 2021, Section 4.1) for an excellent overview of the
+approach. Here, invariance is given by the bisimulation loss.
+In our setting, however, the standard VICReg (Bardes et al.,
+2021)may beinsufficient. This is because, for the pre-
+trained visual encoders considered in this work (i.e., DI-
+Figure 3. First principal component (PC1) of latent embeddings
+produced by different visual feature encoders for a PointMaze
+observation. In all cases, PC1 captures a large percentage of the
+total variance and predominantly encodes background and layout
+information rather than control-relevant features, motivating our
+PCA-based VICReg in the bisimulation encoder.
+NOv2, SimDINOv2, and iBOT) a large fraction of the vari-
+ance is often concentrated in a small number of principal
+components that correlate with the slow features rather than
+task-relevant dynamics. Therefore, by imposing a uniform
+variance across all coordinates may preserve nuisance visual
+features, preventing the bisimulation encoder from collaps-
+ing the task-irrelevant information (see Appendix A.2).
+Leveraging this insight, we propose a PCA-based VCReg
+loss, which adapts VICReg to pretrained visual embeddings
+by guaranteeing a minimum variance in directions that are
+not dominated by a large fraction of slow features.
+4.3. PCA-based Variance Covariance Regularization
+As illustrated in Figure 3, the pretrained visual embeddings
+from DINOv2, SimDINOv2, and iBOT, allocate a large
+amount of variance to the first principal component (PC1),
+which are correlated with task-irrelevant features coming
+from backgrounds and distractors. If we use the standard
+VICReg loss with uniform variance across the coordinates
+of the bisimulation latent space, the optimizer may still pre-
+serve such irrelevant directions simply to satisfy the variance
+threshold, conflicting with the goal of learning a representa-
+tion invariant to those slow features.
+Therefore, we do VICReg in the PCA basis of the current
+batch. Let Wc ≜
+
+(w1 −¯w)⊤ . . .(w B −¯w)⊤
+, be the
+matrix with centered embeddings in the batch of size B,
+where ¯wis the average. We define the empirical covariance
+Σ≜ W ⊤
+c Wc
+B−1 , and further compute its eigendecomposition
+as Σ =UΛU ⊤, where Λ = diag(λ1, . . . , λdw). We extract
+the PCA coordinates ˜wb =U ⊤(wb −¯w), and let ˜Wc be the
+batch matrix with rows˜w⊤
+b .
+To construct the PCA-based VICReg loss, we only en-
+force the variance floor on the tail PCs, namely indices
+i∈ {i 0, . . . , dw}, where i0 is a cutoff index (e.g., i0 = 2).
+Letκ i ≜σ min − √λi +ϵand write the variance term
+Lpca-var(η)≜ 1
+dw −i 0 + 1
+dwX
+i=i0
+[max (0, κi)]2 .
+where ϵ >0 is a small constant for numerical stability and
+σmin denotes a minimum standard deviation. On the other
+hand, we regularize cross-covariances as
+5
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Lpca-cov(η)≜ 1
+dw(dw −1)
+X
+p̸=q
+
+˜Σpq
+2
+, ˜Σ≜
+˜W ⊤
+c ˜Wc
+B−1 ,
+where ˜Σpq denotes the (p, q) entry of the covariance in PCs
+coordinates, namely, the covariance matrix ˜Σ.
+Therefore, we combine the two PCA-based terms
+Lpca-vc(η)≜α v Lpca-var(η) +α c Lpca-cov(η),
+with weightsα v, αc >0, to the predictive loss (2).
+We refer the reader to Appendix A.2 for details on how
+the PCA-based VICReg loss is implemented and empirical
+evidence on how it helps the representation collapse while
+keeping control-relevant features. We emphasize that if the
+visual encoder does not isolate control-irrelevant features
+within a dominant principal component, the PCA-based
+VICReg regularization becomesoptional. In this case, the
+bisimulation-based encoder alone can mitigate, though only
+partially, the influence of task-irrelevant variations in the
+learned representation.
+On the PCA-based VICReg.By not enforcing a mini-
+mum variance on the leading PCA components i < i 0,
+the bisimulation encoder can collapse the directions
+that are dominated by slow features, which concentrate
+in the top components of the pretrained features. At the
+same time, enforcing a variance floor on the tail compo-
+nents i≥i 0 prevents w≡constant and ensures that
+the representation retains sufficient diversity to sepa-
+rate control-relevant states. The covariance loss further
+yields information to be spread across coordinates.
+Implementation.Our bisimulation encoder is initialized
+with random parameters and is first trained using the stan-
+dard VICReg objective (Bardes et al., 2021) for a small
+number of epochs ( k) to stabilize representation learning.
+We then perform a one-time principal component analy-
+sis to identify the dominant direction associated with task-
+irrelevant information. After k (to be set by the practitioner)
+epochs, we replace the standard VICReg loss with the PCA-
+based one, which helps to suppresses the additional variance
+along the identified principal component directions.
+4.4. Transition Model
+We model latent dynamics using a vision transformer that
+predicts the next state in the bisimulation latent space. Fol-
+lowing DINO-WM (Zhou et al., 2025), the vision trans-
+former architecture (Dosovitskiy, 2020) is suitable for pro-
+cessing the underlying patch-based embeddings. Since
+the bisimulation latent states are already represented as
+sequences of patch embeddings, we remove the ViT to-
+kenization layer, yielding a decoder-only transformer.
+The transition model takes as input a history of past bisimu-
+lation latent states and actions across multiple trajectories,
+{(wj,t−H:t−1 , aj,t−H:t−1)}Ntraj
+j=1, where H denotes the con-
+text length and Ntraj the number of trajectories, and it pre-
+dicts the next latent state ˆwt (i.e., in the bisimulation space).
+Note that the subscript j denotes the trajectory embedding
+and action at time stept.
+To respect temporal causality, a causal attention mask is
+implemented (as in (Zhou et al., 2025)) ensuring that predic-
+tions at time t depend only on past latent states and actions.
+More precisely, each patch embedding wi
+t attends to the
+corresponding patch embeddings {wi
+t−H:t−1 }Np
+i=1 over the
+context. Predicting all patches jointly yields global spatial
+structure and temporal dynamics that improves temporal
+generalization as discussed in (Zhou et al., 2025).
+By “filtering out” task-irrelevant visual features, the bisim-
+ulation encoder enables the transition model to learn dy-
+namics that are invariant. The learned joint-embedding
+predictive world model is then used for planning via MPC
+(Kouvaritakis & Cannon, 2016), with actions selected using
+the cross-entropy method (CEM).
+4.5. Planning
+The MPC approach selects the actions whose predicted
+latent rollouts reach a desired goal observation. That is,
+given an initial observationo0 and a goal observationog, our
+model will first compute their latents through the pretrained
+visual and bisimulation encoders,
+z0 =f θ(o0), z g =f θ(og), w 0 =h η(z0), w g =h η(zg).
+Starting from w0, the transition model is used to rollout
+predicted states under a candidate action sequence {at}T−1
+t=0 ,
+i.e., {ˆwt+1}T−1
+t=0 =T ϕ( ˆwt,{a t}t), with ˆw0 =w 0. Planning
+is then cast as minimizing a terminal cost that is the differ-
+ence between the predicted final latent state and the goal
+latent state,
+c(wT ,{a t}t) =∥ˆwT ({at}t)−w g∥2 .(3)
+For brevity, we omit the explicit dependence on the action
+sequence and writec(w T ) =∥ˆwT −w g∥2.
+4.6. A Generalization Bound
+Before turning to the experiments, we also provide a theo-
+retical justification for learning bisimulation-based represen-
+tations on top of JEPA latents. Let us first define the T -step
+on-policy cost-to-go as follows:
+J π
+T (z)≜E
+"T−1X
+t=0
+γtc(h η(zt))|z 0 =z
+#
+, z t+1 ∼P π(· |z t),
+where the expectation is taken over trajectories {zt}T
+t=0
+induced by policy π and transition kernel Pπ starting from
+a visual pretrained latent statez 0 =z.
+Theorem 4.1(Reward-free planning generalization bound).
+Suppose hη(·)ε -approximately preserves the reward-free
+6
+
+Learning Invariant Visual Representations for Planning with JEPAs
+bisimulation metric in the sense that
+∥hη(z)−h η(z′)∥2 −d π(z, z′)
+ ≤ε,for anyz, z ′.
+In addition, suppose that hη(·) is uniformly bounded as
+∥hη(z)∥2 ≤H w for all z and thus ∥wg∥2 ≤H w. Then for
+any two pretrained visual latent embeddingsz, z ′,
+|J π
+T (z)−J π
+T (z′)| ≤8H wT dπ(z, z′).
+We defer the proof of this result to Appendix A.8.
+We also note that the linear dependence on the horizon T
+contrasts with the(1−γ T )/(1−γ) dependence from (Zhang
+et al., 2021; Shimizu & Tomizuka, 2025). This difference
+arises from dropping the reward term in the bisimulation
+metric: while reward-aware bisimulation enables geometric
+discounting of cost discrepancies through immediate reward
+alignment, a reward-free metric propagates the discrepan-
+cies through the transition dynamics, yielding a cumulative
+horizon-dependent bound. In this sense, the T factor can be
+interpreted as the price paid for enforcing control-relevant
+invariance without task-specific reward supervision.
+Key Takeaway.The above result implies that if two
+latent states in the pretrained visual encoder space dif-
+fer only due to nuisance visual variations, such as slow
+features, then their induced planning behavior remains
+similar. More concretely, let z=f θ(o) embed a Point-
+Maze scene with a checkerboard background, and let
+z′ =f θ(o′) embed the same scene with a gradient
+background (see Figure 1), since these visual changes
+do not affect on-policy transition behavior, the bisim-
+ulation distance dπ(z, z′) is small. Consequently, the
+difference in the induced planning cost is bounded
+by O(d π(z, z′)T) . Therefore, robustness of planning
+when starting from w or w′ in the bisimulation latent
+space is governed by their distance in that space.
+5. Experiments
+We now evaluate our world model. Our experiments assess
+robustness to slow, task-irrelevant visual features, such as
+background changes and distractors, and isolate their impact
+on the planning performance. We compare our model to
+DINO-WM (Zhou et al., 2025) and domain randomization
+(DR) (Tobin et al., 2017) for a simple navigation task under
+different visual conditions, and pretrained visual encoders.
+5.1. A Simple Navigation Task
+We evaluate our model on a simple navigation task: the Mu-
+JoCo PointMaze (Fu et al., 2020). This is commonly used
+as benchmark for goal-conditioned planning and navigation
+from visual observations (Fu et al., 2020; Sobal et al., 2025;
+Zhou et al., 2025; Parthasarathy et al., 2025). Despite its
+simplicity, PointMaze provides a controlled setting to assess
+robustness to background changes and distractors, while
+keeping the transition dynamics fixed. Further details on the
+task setup are provided in Appendix A.3.
+Although PointMaze is a fairly simple navigation task, we
+observe that DINO-WM has a substantial drop in the per-
+formance under test-time background changes and moving
+distractors. This highlights that even for a simple task, sen-
+sitivity to slow features can negatively impact planning,
+motivating the need for an invariant latent representation.
+Evaluation Metric.We report performance using the suc-
+cess rate (SR), defined as the fraction of successful episodes
+over 50 independently sampled initial and goal pairs. An
+episode is considered successful if the agent approximately
+reaches the goal region within a fixed number of steps.
+5.2. Baseline
+We compare our model with two baselines: DINO-WM
+(Zhou et al., 2025) and domain DR (Tobin et al., 2017).
+Both baselines are evaluated under the same task, planning
+horizon, and evaluation metric previously described.
+DINO-WM.We use the original DINO-WM architecture as
+proposed in (Zhou et al., 2025). The model operates directly
+on pretrained DINOv2 patch embeddings with 196 patches,
+each of dimensionality 384, and learns latent dynamics with-
+out explicit invariance regularization. DINO-WM is trained
+with a batch size of32.
+Domain Randomization (DR).We also train DINO-WM
+with domain randomization (Tobin et al., 2017). In partic-
+ular, we randomize the visual appearance of the task for
+40% of the training dataset by applying background color
+changes and gradient-based background modifications, for
+the PointMaze task. To avoid introducing spurious tempo-
+ral artifacts, the randomized background is kept consistent
+across trajectories. We refer the reader to Appendix A.5.
+Our model adopts the same number of visual patches (i.e.,
+196) as DINO-WM, but introduce a bisimulation encoder
+that maps each patch to a 32-dimensional latent embedding
+(see Figure 6). This leads to a latent space that is10× lower-
+dimensional than the 384-dimensional patch embeddings
+used by DINO-WM. Our model is trained with a batch size
+of 20. We refer the reader to Appendix A.1.4 for details on
+the model hyperparameters.
+5.3. Background Changes
+We consider different background changes and a moving
+distractor (see Figure 4) that alter the visual appearance
+of the scene while preserving the underlying transition dy-
+namics. These changes are applied only at test time, unless
+otherwise stated, and are designed to isolate the effect of
+slow features on the planning performance.
+7
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Figure 4. The six different scenarios that we use to measure robust-
+ness based on PointMaze with checkerboard background. From
+left to right, these are:NC: No Change,SC: Slight background
+Change ,C: Color gradient background,LC: Large Color back-
+ground Change,LCG: Large Color Gradient background change,
+andD: moving Distractors with yellow and magenta dots.
+5.4. Results
+Table 1 reports the success rate for the PointMaze task under
+background changes and a moving distractor. Results for
+PointMaze correspond to models trained for50epochs.
+Robustness to the background.We note that DINO-
+WM displays degradation in performance when the visual
+background is different from the one seen when training
+(NC). For instance, in the PointMaze task, while DINO-
+WM achieves 0.8 success rate under NC, its performance
+drops for SC, 0.72, and it drops even more under aggressive
+changes, such as LCG, achieving0.48success rate.
+In contrast, our model consistently achieves high success
+rates across background changes in PointMaze (around0.76
+success). This highlights that invariance with the bisimula-
+tion encoder effectively “filters out” background-dependent
+features from the latent dynamics, leading to reliable plan-
+ning despite significant visual changes.
+Comparison with DR.Domain randomization performs
+well when test-time backgrounds resemble combinations
+of visual changes observed during training ( 0.82 success
+rate for NC, SC, and C). However, its performance degrades
+substantially under an aggressive background change (LCG)
+that are not covered by the randomized training distribution,
+i.e., achieving0.64success rate.
+Moving distractor.Under the moving distractor, DINO-
+WM again has its performance dropped, indicating that per-
+sistent but task-irrelevant motion in the background can also
+dominate the learned latent dynamics. Our model remains
+consistent, as the distractor does not affect the transition dy-
+namics and is then suppressed by the bisimulation encoder.
+Table 1. Success rate of DINO-Bisim under different scenarios
+(Figure 4) compared to DINO-WM with and without DR.
+Model NC SC C LC LCG D
+DINO-WM0.80 0.72 0.60 0.56 0.48 0.78
+w/DR0.82 0.82 0.82 0.68 0.64 0.82
+Ours0.78 0.80 0.76 0.86 0.78 0.82
+5.5. On Different Pretrained Visual Encoders
+Table 2 reports the success rate achieved by our model when
+using different pretrained visual encoders. We observe that
+training the modelend-to-endwithout DINOv2 features
+results in a clear degradation in performance (e.g., a success
+rate of 0.26 under LC) compared to training with DINOv2
+(0.86 success rate under LC). This behavior is expected,
+as learning accurate latent transition dynamics relies on
+sufficiently informative visual representations.
+We further evaluate robustness using SimDINOv2 and iBOT
+features. SimDINOv2 (with ViT-B/16) produces patch em-
+beddings of higher dimensionality than DINOv2 (768 com-
+pared to the 384 of DINOv2). As all models are trained with
+the same number of samples, the larger feature dimension-
+ality may lead to a lower success rate (for example due to
+overfitting). Nevertheless, performance remains consistent
+across background changes, indicating that our bisimulation
+encoder continues to suppress task-irrelevant visual features
+coming from SimDINOv2 embeddings.
+On the other hand, with iBOT features our model achieves
+strong planning performance (around 0.72 success rate) and
+robustness comparable to the model with DINOv2, further
+indicating that the proposed approach generalizes to differ-
+ent pretrained visual encoders.
+Table 2. Success rate with different pretrained visual encoder back-
+bones under the different scenarios from Figure 4.
+Model NC SC C LC LCG D
+No Encoder0.68 0.44 0.70 0.26 0.36 0.64
+DINOv20.78 0.8 0.76 0.86 0.78 0.82
+SimDINOv20.40 0.38 0.36 0.42 0.42 0.36
+iBOT0.72 0.70 0.74 0.72 0.72 0.72
+5.6. On the Reward-aware Bisimulation Encoder
+Prior work on bisimulation-based MPC incorporates an ex-
+plicit reward predictor as part of the bisimulation objective
+to estimate rewards for planning (Shimizu & Tomizuka,
+2025) (see Appendix A.1). While such a design is important
+for value approximation or policy transfer, it is not funda-
+mental for our JEPA. Here the goal is to learn an invariant
+latent representation that preserves control-relevant transi-
+tion dynamics rather than task-specific reward structure.
+Empirically, when a reward predictor is included, Figure 11
+shows that the reward distance converges to near zero early
+in training and provides little additional signal for improving
+accuracy in the transition dynamics. This suggests that, for
+the PointMaze task, reward prediction does not contribute
+beyond what is already captured by the transition dynamics.
+6. Discussions and Future Work
+We show that DINO-WM is not robust under background
+changes and distractors. By enforcing control-relevant in-
+variance via bisimulation on top of pretrained visual features,
+we obtain latent embeddings 10× lower-dimensional than
+that of DINO-WM that are robust for planning under visual
+8
+
+Learning Invariant Visual Representations for Planning with JEPAs
+shifts, without reward supervision.
+We note two key limitations of our work: 1) we assume
+access to sufficiently informative pretrained visual features.
+While we show robustness across different self-supervised
+encoders (Table 2), performance degrades when the visual
+representations lack semantic structure (i.e., without DI-
+NOv2), indicating that bisimulation-based invariance cannot
+compensate for poor visual features. 2) Our theoretical anal-
+ysis focuses on reward-free bisimulation with goal-reaching
+costs and yields a horizon-dependent bound. While this
+aligns with JEPAs, it yields looser bounds than its reward-
+aware counterpart. Understanding whether O(T) is funda-
+mental remains open.
+Several directions come naturally from this work. First, we
+can integrate the bisimulation encoder in gradient-based
+planning (Parthasarathy et al., 2025), which may benefit
+from smoother and invariant latent dynamics. Another direc-
+tion is to combine the bisimulation invariance with adaptive
+policies, enabling online refinement of the invariant repre-
+sentation as the agent encounters new visual conditions.
+From a theoretical perspective, extending our analysis to
+reward-aware bisimulation could clarify the trade-offs be-
+tween JEPAs’ modularity and tighter generalization bounds.
+Finally, considering complex manipulation tasks and long-
+horizon planning problems is under current implementation.
+Impact Statement
+This work aims to advance robust, task-agnostic visual
+world models for planning by improving representation
+learning under visual distribution shifts. There are many
+potential societal impacts of this work, none of which we
+feel must be specifically highlighted here.
+Acknowledgments
+The authors thank Vlad Sobal and Tim G. J. Rudner for
+instructive discussions on this work. Leonardo F. Toso is
+funded by the Center for AI and Responsible Financial
+Innovation (CAIRFI) Fellowship and by the Columbia Pres-
+idential Fellowship. James Anderson is partially funded by
+NSF grants ECCS 2144634 and 2231350 and the Columbia
+Center of AI Technology in collaboration with Amazon.
+References
+Abate, A. Approximation metrics based on probabilistic
+bisimulations for general state-space markov processes:
+a survey.Electronic Notes in Theoretical Computer Sci-
+ence, 297:3–25, 2013.
+Assran, M., Duval, Q., Misra, I., Bojanowski, P., Vincent,
+P., Rabbat, M., LeCun, Y ., and Ballas, N. Self-supervised
+learning from images with a joint-embedding predictive
+architecture. InProceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pp. 15619–
+15629, 2023.
+Balestriero, R. and LeCun, Y . Lejepa: Provable and scalable
+self-supervised learning without the heuristics.arXiv
+preprint arXiv:2511.08544, 2025.
+Bardes, A., Ponce, J., and LeCun, Y . Vicreg: Variance-
+invariance-covariance regularization for self-supervised
+learning.arXiv preprint arXiv:2105.04906, 2021.
+Caron, M., Touvron, H., Misra, I., J ´egou, H., Mairal, J.,
+Bojanowski, P., and Joulin, A. Emerging properties in
+self-supervised vision transformers. InProceedings of the
+IEEE/CVF international conference on computer vision,
+pp. 9650–9660, 2021.
+Castro, P. and Precup, D. Using bisimulation for policy
+transfer in mdps. InProceedings of the AAAI confer-
+ence on artificial intelligence, volume 24, pp. 1065–1070,
+2010.
+Castro, P. S. Scalable methods for computing state similarity
+in deterministic markov decision processes. InProceed-
+ings of the AAAI Conference on Artificial Intelligence,
+volume 34, pp. 10069–10076, 2020.
+Castro, P. S., Panangaden, P., and Precup, D. Equivalence
+relations in fully and partially observable markov decision
+processes. InIJCAI, volume 9, pp. 1653–1658, 2009.
+Dosovitskiy, A. An image is worth 16x16 words: Trans-
+formers for image recognition at scale.arXiv preprint
+arXiv:2010.11929, 2020.
+Ebert, F., Finn, C., Dasari, S., Xie, A., Lee, A., and Levine,
+S. Visual foresight: Model-based deep reinforcement
+learning for vision-based robotic control.arXiv preprint
+arXiv:1812.00568, 2018.
+Ferns, N., Panangaden, P., and Precup, D. Metrics for finite
+markov decision processes. InUAI, volume 4, pp. 162–
+169, 2004.
+Ferns, N., Panangaden, P., and Precup, D. Bisimulation
+metrics for continuous markov decision processes.SIAM
+Journal on Computing, 40(6):1662–1714, 2011.
+Fu, J., Kumar, A., Nachum, O., Tucker, G., and Levine,
+S. D4rl: Datasets for deep data-driven reinforcement
+learning.arXiv preprint arXiv:2004.07219, 2020.
+Givens, C. R. and Shortt, R. M. A class of wasserstein met-
+rics for probability distributions.Michigan Mathematical
+Journal, 31(2):231–240, 1984.
+Grill, J.-B., Strub, F., Altch´e, F., Tallec, C., Richemond, P.,
+Buchatskaya, E., Doersch, C., Avila Pires, B., Guo, Z.,
+Gheshlaghi Azar, M., et al. Bootstrap your own latent-a
+new approach to self-supervised learning.Advances in
+9
+
+Learning Invariant Visual Representations for Planning with JEPAs
+neural information processing systems, 33:21271–21284,
+2020.
+Ha, D. and Schmidhuber, J. World models.arXiv preprint
+arXiv:1803.10122, 2(3), 2018.
+Hafner, D., Lillicrap, T., Fischer, I., Villegas, R., Ha, D.,
+Lee, H., and Davidson, J. Learning latent dynamics for
+planning from pixels. InInternational conference on
+machine learning, pp. 2555–2565. PMLR, 2019.
+Hafner, D., Lillicrap, T., Ba, J., and Norouzi, M. Dream
+to control: Learning behaviors by latent imagination. In
+International Conference on Learning Representations,
+2020.
+Hafner, D., Lillicrap, T. P., Norouzi, M., and Ba, J. Mas-
+tering atari with discrete world models. InInternational
+Conference on Learning Representations, 2021.
+He, K., Chen, X., Xie, S., Li, Y ., Doll´ar, P., and Girshick,
+R. Masked autoencoders are scalable vision learners. In
+Proceedings of the IEEE/CVF conference on computer
+vision and pattern recognition, pp. 16000–16009, 2022.
+Jiang, D., Liu, Y ., Liu, S., Zhao, J., Zhang, H., Gao, Z.,
+Zhang, X., Li, J., and Xiong, H. From clip to dino: Visual
+encoders shout in multi-modal large language models.
+arXiv preprint arXiv:2310.08825, 2023.
+Kemertas, M. and Aumentado-Armstrong, T. Towards ro-
+bust bisimulation metric learning.Advances in Neural
+Information Processing Systems, 34:4764–4777, 2021.
+Khorrambakht, R., Ortiz-Haro, J., Amigo, J., Mostafa, O.,
+Dugas, D., Meier, F., and Righetti, L. Worldplanner:
+Monte carlo tree search and mpc with action-conditioned
+visual world models.arXiv preprint arXiv:2511.03077,
+2025.
+Kouvaritakis, B. and Cannon, M. Model predictive control.
+Switzerland: Springer International Publishing, 38(13-
+56):7, 2016.
+LeCun, Y . A path towards autonomous machine intelligence
+version 0.9. 2, 2022-06-27.Open Review, 62(1):1–62,
+2022.
+Lenz, I., Knepper, R. A., and Saxena, A. Deepmpc: Learn-
+ing deep latent features for model predictive control. In
+Robotics: Science and Systems, volume 10, pp. 25. Rome,
+Italy, 2015.
+Matsuo, Y ., LeCun, Y ., Sahani, M., Precup, D., Silver, D.,
+Sugiyama, M., Uchibe, E., and Morimoto, J. Deep learn-
+ing, reinforcement learning, and world models.Neural
+Networks, 152:267–275, 2022.
+Oquab, M., Darcet, T., Moutakanni, T., V o, H., Szafraniec,
+M., Khalidov, V ., Fernandez, P., Haziza, D., Massa, F., El-
+Nouby, A., et al. Dinov2: Learning robust visual features
+without supervision.arXiv preprint arXiv:2304.07193,
+2023.
+Parthasarathy, A., Kalra, N., Agrawal, R., LeCun, Y .,
+Bounou, O., Izmailov, P., and Goldblum, M. Closing
+the train-test gap in world models for gradient-based plan-
+ning.arXiv preprint arXiv:2512.09929, 2025.
+Rubinstein, R. Y . and Kroese, D. P.The cross-entropy
+method: a unified approach to combinatorial optimiza-
+tion, Monte-Carlo simulation and machine learning.
+Springer Science & Business Media, 2004.
+Shadmehr, R. and Mussa-Ivaldi, S.Biological Learning and
+Control: How the Brain Builds Representations, Predicts
+Events, and Makes Decisions. The MIT Press, 2012.
+Shimizu, Y . and Tomizuka, M. Bisimulation metric for
+model predictive control. InInternational Conference on
+Learning Representations, 2025.
+Sobal, V ., SV , J., Jalagam, S., Carion, N., Cho, K., and
+LeCun, Y . Joint embedding predictive architectures focus
+on slow features.arXiv preprint arXiv:2211.10831, 2022.
+Sobal, V ., Zhang, W., Cho, K., Balestriero, R., Rudner, T. G.,
+and LeCun, Y . Learning from reward-free offline data:
+A case for planning with latent dynamics models.arXiv
+preprint arXiv:2502.14819, 2025.
+Thuruthel, T. G., Falotico, E., Renda, F., and Laschi, C.
+Model-based reinforcement learning for closed-loop dy-
+namic control of soft robotic manipulators.IEEE Trans-
+actions on Robotics, 35(1):124–134, 2018.
+Tkachev, I. and Abate, A. On infinite-horizon probabilis-
+tic properties and stochastic bisimulation functions. In
+2011 50th IEEE Conference on Decision and Control and
+European Control Conference, pp. 526–531. IEEE, 2011.
+Tobin, J., Fong, R., Ray, A., Schneider, J., Zaremba, W.,
+and Abbeel, P. Domain randomization for transferring
+deep neural networks from simulation to the real world.
+In2017 IEEE/RSJ international conference on intelligent
+robots and systems (IROS), pp. 23–30. IEEE, 2017.
+Villani, C. et al.Optimal transport: old and new, volume
+338. Springer, 2008.
+Williams, G., Wagener, N., Goldfain, B., Drews, P., Rehg,
+J. M., Boots, B., and Theodorou, E. A. Information
+theoretic mpc for model-based reinforcement learning.
+In2017 IEEE international conference on robotics and
+automation (ICRA), pp. 1714–1721. IEEE, 2017.
+10
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Wu, Z., Zhang, J., Pai, D., Wang, X., Singh, C., Yang, J.,
+Gao, J., and Ma, Y . Simplifying dino via coding rate
+regularization.arXiv preprint arXiv:2502.10385, 2025.
+Zhang, A., McAllister, R. T., Calandra, R., Gal, Y ., and
+Levine, S. Learning invariant representations for rein-
+forcement learning without reconstruction. InInterna-
+tional Conference on Learning Representations, 2021.
+Zhou, G., Pan, H., LeCun, Y ., and Pinto, L. DINO-WM:
+World models on pre-trained visual features enable zero-
+shot planning. InInternational Conference on Machine
+Learning, 2025.
+Zhou, J., Wei, C., Wang, H., Shen, W., Xie, C., Yuille, A.,
+and Kong, T. ibot: Image bert pre-training with online
+tokenizer.arXiv preprint arXiv:2111.07832, 2021.
+Zhu, J., Evtimova, K., Chen, Y ., Shwartz-Ziv, R., and Le-
+Cun, Y . Variance-covariance regularization improves rep-
+resentation learning.arXiv preprint arXiv:2306.13292,
+2023.
+11
+
+Learning Invariant Visual Representations for Planning with JEPAs
+A. Appendix
+This appendix provides additional details that complement the main text. We include specifics on the architecture and
+implementation of the proposed bisimulation encoder and transition model, further discussion of the PCA-based variance-
+covariance regularization, and extended descriptions of the experimental setup, including task configurations, domain
+randomization, and planning details. We also provide the proofs for the generalization bound in Section 4.6.
+A.1. Model Architecture
+This section provides additional details on the architecture of the proposed joint-embedding predictive world model with
+bisimulation encoder.
+A.1.1. OVERVIEW
+The DINO-Bisim model takes visual observations, proprioceptive inputs, and actions at the current timestep and predicts the
+next bisimulation latent state, along with an optional reward prediction. Visual observations are encoded using a pretrained
+DINOv2 ViT-S/14 visual encoder (Oquab et al., 2023), followed by a bisimulation encoder implemented as an MLP to
+produce the latent state. Proprioceptive inputs and actions are embedded using lightweight 1D convolutional encoders. The
+resulting embeddings are concatenated and processed by a 6-layer transformer to predict the next bisimulation latent state.
+A separate reward MLP predicts the reward from the latent state, however, this component is not used in our experiments, as
+discussed in Section 5 and throughout the main text.
+Figure 5.Overview of the DINO-Bisim architecture.
+A.1.2. BISIMULATIONMEMORYBUFFER(REPLAYBUFFER)
+Recalling the definition of the bisimulation metric introduced in Section 3.2 and in (Castro, 2020), the corresponding loss
+involves computing differences between selected pairs of states. Since a single training iteration can only leverage the
+current batch of 20 states, we introduce a bisimulation memory buffer that stores up to 1000 previously generated states,
+also following (Zhang et al., 2021). This buffer allows comparisons with a larger and more diverse set of past states, thereby
+improving the stability and effectiveness of the bisimulation representation learning.
+A.1.3. PATCH DESIGN INBISIMULATIONMODEL
+Why Patch-based Design?The bisimulation model adopts a patch-based design, in which visual inputs are partitioned into
+spatial patches and each patch is encoded independently. This design builds upon the bisimulation encoder in (Shimizu &
+Tomizuka, 2025) and naturally aligns with the output format of DINOv2 and other patch-based visual encoders. Beyond
+architectural compatibility, the patch-based formulation substantially reduces the number of trainable parameters, leading to
+a more compact and efficient model while empirically improving performance.
+More concretely, an example architecture using the hyperparameters in Table 4 is illustrated in Figure 6. Rather than
+12
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Figure 6.Bisimulation encoder with patch-based design, with196of patches and32output patch dimension.
+flattening a feature map of size 14×14×384 into a 75264-dimensional vector as input to the first layer, the patch-based
+bisimulation encoder performs196 parallel forward passes using a shared MLP whose input dimension is384. As a result, the
+number of parameters in the first layer is reduced from(75,264×256)+256 = 19,267,840 to (384×256)+256 = 98,560 ,
+where256is the hidden layer dimension, with only negligible additional overhead from the spatial embedding parameters.
+Latent Space Dimensionality Comparison.DINO-WM operates on patch-based visual representations produced by
+DINOv2, consisting of 196 patches with 384-dimensional embeddings each, resulting in a latent representation of size
+196×384 . In contrast, our patch-based bisimulation encoder preserves the same spatial structure but maps each patch to
+a low-dimensional latent embedding. This yields a representation of size 196×32 . Consequently, our model operates
+in a latent space that is more than 10× smaller than that of DINO-WM, while maintaining improved robustness to slow,
+task-irrelevant features.
+A.1.4. HYPERPARAMETERS
+We now summarizes the hyperparameters used in our experiments.
+Table 3.Shared hyperparameters for DINO-Bisim training.
+Name Value
+Image size 224
+Optimizer AdamW
+Decoder learning rate3e−4
+Predictor learning rate1e−5
+Action encoder learning rate1e−4
+Bisimulation learning rate5e−7
+Action embedding dim. 10
+Proprio embedding dim. 10
+Epochs 50
+Batch size 20
+Table 4.Bisimulation encoder hyperparameters.
+Name Value
+Bisimulation memory buffer size 1000
+Bisimulation state comparison size 200
+Action dim. 10
+Num patches 196
+Latent dim. 32
+Patch dim. 32
+Patch embedding dim. 384
+We list below the main hyperparameters used by the bisimulation encoder and transition model. These parameters control
+13
+
+Learning Invariant Visual Representations for Planning with JEPAs
+the dimensionality of the latent representation, the size of the comparison set used for bisimulation representation learning,
+and the dimensionality of visual and action embeddings.
+Bisimulation Memory Buffer Size and Comparison Size.The capacity of the bisimulation memory buffer and the number
+of stored latent states used for pairwise comparisons when computing the bisimulation loss.
+Action Dimension (action dim).The dimensionality of the encoded action representation, used as input to the reward
+predictor that is not in use for our experiments.
+Number of Patches (num patches).The number of spatial patches output by the bisimulation encoder, matching the
+patch decomposition of the visual pretrained encoder.
+Latent Dimension (latent dim).The dimensionality of the bisimulation latent space for each patch.
+Patch Dimension (patch dim).The dimensionality of each patch embedding produced by the bisimulation encoder; in
+our implementation, this is set equal tolatent dim.
+Patch Embedding Dimension (patch emb dim).The dimensionality of the input patch embeddings provided by the
+pretrained visual encoder, matching the output dimension of DINOv2.
+A.2. PCA-based Variance Covariance Regularization
+Setup.Our experiments use DINOv2, SimDINOv2 and iBOT as pretrained visual encoder, which encode background
+appearance along the dominant principal components (see Section 4.3). As noted in the DINOv2 paper (Oquab et al.,
+2023), background information can be attenuated by thresholding the first principal component. Consistent with this
+observation and our illustration in Figures 3 and 8, we make the preliminary assessment that task-irrelevant appearance
+factors predominantly align with the first principal component direction in the latent feature space.
+Method.The bisimulation encoder is initialized with random parameters and is first trained using the standard VICReg
+objective for a small number of epochs to stabilize representation learning. We then perform a one-time principal component
+analysis to identify the dominant direction associated with task-irrelevant variation. After a number of warm-up epochs,
+we replace the standard VICReg loss with the proposed PCA-based VICReg objective, which helps to suppresses variance
+along the identified principal component directions.
+An example training run with a vectorized bisimulation latent representation of dimension 196×32 (corresponding to
+the number of patches and per-patch latent dimensionality), where PCA-based VICReg is enabled after k= 50 epochs, is
+shown in Figure 7.
+Result.While this staged regularization approach improves the stability of invariant representation learning, we hypothesize
+that a tighter integration of PCA-based regularization throughout training and planning, rather than a discrete loss swap,
+could further enhance invariance. Exploring such joint objectives is an interesting direction for future work.
+A.3. Additional Information on the Navigation Task
+This section provides additional details on the simple navigation task used in our experiments, complementing the high-level
+description in the main text.
+PointMaze (Fu et al., 2020) is a force-actuated 2-DoF navigation environment in which a ball moves in the Cartesian x–y
+plane with the objective of reaching a target location. The agent observes proprioceptive state information and evolves under
+continuous dynamics that capture velocity, acceleration, and inertia. For a fair comparison, we train all models on 2000 fully
+random trajectories, matching the data setup in (Zhou et al., 2025). See Figure 9 for a sequence of frames that illustrates the
+planning from an initial state to a goal state.
+A.4. Planning
+We optimize the action sequence using CEM. At each step, CEM samples multiple candidate action sequences, rolls them
+out using the learned model, selects the sequences with lowest cost (3), and updates the sampling distribution accordingly.
+The first action of the optimized sequence is played, and the process repeats with a receding horizon.
+Although gradient-based planning methods have recently been proposed and validated in (Parthasarathy et al., 2025) for
+14
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Figure 7. First two principal components (PCs) of three distinct states (colors) observed under three different backgrounds (marker shapes)
+for the PointMaze task. The goal of the bisimulation encoder is to map identical states across backgrounds to nearby latent representations.
+Left.DINOv2 embeddings zt =f θ(ot) show strong separation along the first PC for identical states under different backgrounds,
+indicating that background variation dominates the leading principal direction.Middle.Bisimulation embeddings wt =h η(zt) after 50
+epochs with standard VICReg still exhibit separation along the first PC, preserving background-dependent variation.Right.Bisimulation
+embeddings after 90 epochs with PCA-based VICReg (activated at epoch 50) show improved clustering of identical states across
+backgrounds, consistent with suppression of task-irrelevant variation.
+DINO-WM, we focus on CEM for fair comparison with DINO-WM (Zhou et al., 2025).
+A.5. Domain Randomization for the PointMaze Task
+To evaluate robustness through data augmentation, we apply domain randomization to the PointMaze task by modifying the
+visual appearance of the environment during training. In particular, 40% of the training data are rendered with randomized
+visual backgrounds, while the remaining trajectories retain the default appearance. The randomization includes background
+color changes and gradient-based background modifications, as illustrated in Figure 10.
+To avoid introducing spurious temporal artifacts that could make the transition dynamics learning harder, the randomized
+background is kept fixed within each trajectory but varies across different trajectories. Importantly, these visual modifications
+do not alter the underlying environment dynamics, agent behavior, or goal locations, ensuring that domain randomization
+affects only task-irrelevant visual features.
+A.6. Reward-aware Bisimulation Encoder: Training Metrics
+Let us now analyze the training dynamics of the reward-aware bisimulation encoder to assess the contribution of the reward
+prediction term relative to the transition-based objectives. Following prior work on bisimulation-based MPC (Shimizu &
+Tomizuka, 2025), we include an auxiliary reward predictor during training, although it is not used for training nor planning
+in our experiments.
+Figure 11.Training losses value versus the training epochs.
+Figure 11 reports the evolution of the main loss compo-
+nents throughout training. We observe that the reward
+prediction loss rapidly converges to near zero early in
+training and remains negligible afterwards. This indicates
+that, for the navigation task considered, reward prediction
+provides little additional learning signal beyond what is
+already captured by the transition dynamics. As a result,
+the reward term has a negligible influence on the learned
+latent representation.
+15
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Figure 8. First twp principal components (PC1 and PC2) of latent embeddings produced by DINOv2, SimDINOv2, and iBOT for a
+PointMaze observation. In all cases, PC1 captures a large percentage of the total variance that predominantly encodes background and
+layout information rather than control-relevant features.
+Figure 9.PointMaze task, from leftmost the initial state to the rightmost the goal state
+On the other hand, the transition losses and representation
+regularization terms (including the VICReg and bisimu-
+lation objectives) remain active throughout training and
+dominate the optimization process. These components are responsible for making the latent space to preserve control-
+relevant dynamics while suppressing task-irrelevant visual features. This empirical observation supports the design choice
+adopted in the main experiments, where we drop the reward prediction term and rely only on transition-based bisimulation
+to enforce invariance.
+A.7. Moving Distractors
+To evaluate robustness to dynamic but task-irrelevant visual variations, we consider two moving distractors in the PointMaze
+task. As illustrated in Figure 10, we augment the environment with colored distractor objects (yellow and magenta dots) that
+move continuously within the maze while remaining decoupled from the agent dynamics and task objectives.
+The distractors introduce persistent motion that can dominate DINO-WM latent dynamics, despite being irrelevant for
+control. On the other hand our bisimulation-based representation is designed to suppress such task-irrelevant motion by
+enforcing equivalence between states that exhibit identical on-policy transition behavior. As a result, planning performance
+remains stable in the presence of moving distractors, whereas DINO-WM tend to drop in performance.
+A.8. Reward-Free Generalization Bound: Proof of Theorem 4.1
+We first provide an auxiliary lemma regarding the 1-Wasserstein distance which we use in the proof of Theorem 4.1.
+Lemma A.1(Kantorovich-Rubinstein duality (Villani et al., 2008)).Let µ,andν be two probability measures on the metric
+space(Ω, d π), then
+W1(µ, ν) = sup
+∥f∥ L≤1
+(Ex∼µ[f(x)]−E y∼ν[f(y)]),(4)
+16
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Figure 10. Examples of domain-randomized visual observations for the PointMaze task. During training, background appearance is
+randomized across trajectories using color shifts, gradient backgrounds, and fixed distractors (i.e., the dot outside the maze) while the
+underlying maze layout and transition dynamics remain unchanged.
+Figure 12. Moving distractor setting in PointMaze. Yellow and magenta dots move continuously within the maze, introducing dynamic
+but task-irrelevant visual variation while preserving the underlying transition dynamics.
+where∥ · ∥ L is the Lipschitz norm (i.e.,∥f∥ L ≤sup x̸=y
+|f(x)−f(y)|
+|x−y| ).
+We will later invoke the auxiliary result above in the proofs of Theorem 4.1. To make this step explicit, we first show
+how the Kantorovich-Rubinstein duality implies a Lipschitz-based bound on differences of expectations. Let µ≜P π(· |
+z),andν≜P π(· |z ′), be two probability measures on the metric space (Ω, dπ), and define a scalar-valued function s(˜z)
+on the latent spacez. Assuming thats(z)is aL-Lipschitz with respect tod π, i.e.,
+|s(u)−s(v)| ≤Ld π(u, v),∀u, v∈Ω.
+By Kantorovich-Rubinstein duality (Lemma A.1), we have
+W1(µ, ν) = sup
+∥f∥ L≤1
+(Ex∼µ[f(x)]−E y∼ν[f(y)]),
+where ∥f∥ L ≤1 denotes that f is 1-Lipschitz with respect to dπ. Now define the rescaled function l(·)≜ 1
+L s(·). Then l is
+1-Lipschitz since, for allu, v∈Ω, we have
+|l(u)−l(v)|= 1
+L |s(u)−s(v)| ≤ 1
+L Ldπ(u, v) =d π(u, v).
+Thuslis feasible for the supremum in (4), implying that
+W1(µ, ν)≥E x∼µ[l(x)]−E y∼ν[l(y)] = 1
+L (Ex∼µ[s(x)]−E y∼Q[s(y)]).
+17
+
+Learning Invariant Visual Representations for Planning with JEPAs
+Rearranging the terms, we obtain
+Ex∼µ[s(x)]−E y∼ν[s(y)]≤LW 1(µ, ν).(5)
+Proof of Theorem 4.1:We begin the proof by first noticing that the goal-reaching cost used for planning is Lipschitz on the
+bounded set of bisimulation latent states, i.e., {w:∥w∥ 2 ≤H w}. Indeed, for any w, w′ with ∥w∥2,∥w ′∥2,∥w g∥2 ≤H w,
+we have the following expression
+|c(w)−c(w ′)|=
+∥w−w g∥2
+2 − ∥w′ −w g∥2
+2
+
+=|⟨w−w ′, w+w ′ −2w g⟩|
+≤ ∥w−w ′∥2∥w+w ′ −2w g∥2 (Cauchy–Schwarz inequality)
+≤4H w∥w−w ′∥2,(6)
+soc(w)is4H w-Lipschitz.
+We further write the recursion
+J π
+T (z) =c(h η(z)) +γE ˜z∼Pπ(·|z)
+
+J π
+T−1 (˜z)
+
+,(7)
+where we assume thatJ π
+0 (z)≡0.
+We then prove by induction thatJ π
+T isL T -Lipschitz with respect tod π(z, z′), withL T ≜8H wT, which implies (??).
+ForT= 0it holds trivially. Assume it holds forT−1. Then for anyz, z ′,
+|J π
+T (z)−J π
+T (z′)| ≤ |c(h η(z))−c(h η(z′))|+γ
+E˜z∼Pπ(·|z)J π
+T−1 (˜z)−E˜z′∼Pπ(·|z′)J π
+T−1 (˜z′)
+ .
+Note that the first term is bounded by the quantity 4Hw∥hη(z)−h η(z′)∥2. On the other hand, for the second
+term, since J π
+T−1 is LT−1 -Lipschitz with respect to dπ(z, z′), we can use Kantorovich-Rubinstein duality to boundE˜z∼Pπ(·|z)J π
+T−1 (˜z)−E˜z′∼Pπ(·|z′)J π
+T−1 (˜z′)
+ byL T−1 W1 (Pπ(· |z), P π(· |z ′)),i.e., by using (5).
+Using the definition of the bisimulation metric, with the reward term dropped, we have W1 (Pπ(· |z), P π(· |z ′)) =
+γ−1dπ(z, z′). Therefore, we obtain
+|J π
+T (z)−J π
+T (z′)| ≤4H w∥hη(z)−h η(z′)∥2 +L T−1 dπ(z, z′).
+As we assume that∥h η(z)−h η(z′)∥2 ≤d π(z, z′) +ε, then
+|J π
+T (z)−J π
+T (z′)| ≤(4H w +L T−1 )d π(z, z′) + 4Hwε.(8)
+Unrolling the recursion and assuming that ϵ is sufficiently small, i.e., ϵ≤d π(z, z′), then LT ≜8H wT , which implies the
+bound as stated in Theorem 4.1.
+18

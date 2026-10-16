@@ -1,0 +1,89 @@
+{
+  "pack": "flow_matching_starter_pack",
+  "generated_at": "2026-08-17",
+  "timezone": "Asia/Shanghai",
+  "notes": "PDFs were parsed with pypdf and SHA-256 checked after download. arXiv versions are the versions returned by the arXiv API on 2026-08-17.",
+  "papers": [
+    {
+      "file": "papers/Flow_Matching_Guide_2412.06264.pdf",
+      "title": "Flow Matching Guide and Code",
+      "arxiv_id": "2412.06264",
+      "arxiv_version": "v1",
+      "source": "https://arxiv.org/pdf/2412.06264",
+      "pages": 83,
+      "bytes": 18573090,
+      "sha256": "520d9cd0f62856033b5f61c6920b3447c4f33ba349eae718113abb3c5b6d096d"
+    },
+    {
+      "file": "papers/Flow_Matching_2210.02747.pdf",
+      "title": "Flow Matching for Generative Modeling",
+      "arxiv_id": "2210.02747",
+      "arxiv_version": "v2",
+      "source": "https://arxiv.org/pdf/2210.02747",
+      "pages": 28,
+      "bytes": 25147129,
+      "sha256": "5eeb39ba516396924aba4787452f9d0abdee88467a4d0c264d9f66cad0c5ee14"
+    },
+    {
+      "file": "papers/Rectified_Flow_2209.03003.pdf",
+      "title": "Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow",
+      "arxiv_id": "2209.03003",
+      "arxiv_version": "v1",
+      "source": "https://arxiv.org/pdf/2209.03003",
+      "pages": 41,
+      "bytes": 18024983,
+      "sha256": "d81790cb6988ef480002adcc84000d4f44855b11fb868001fd53aad133bc3a74"
+    },
+    {
+      "file": "papers/OT_CFM_2302.00482.pdf",
+      "title": "Improving and Generalizing Flow-Based Generative Models with Minibatch Optimal Transport",
+      "arxiv_id": "2302.00482",
+      "arxiv_version": "v4",
+      "source": "https://arxiv.org/pdf/2302.00482",
+      "pages": 34,
+      "bytes": 9677988,
+      "sha256": "c98a4834abffe8a5c4e27c13c36a10d83d38e8780c98c3891150c4e028094d0a"
+    },
+    {
+      "file": "papers/Stochastic_Interpolants_2303.08797.pdf",
+      "title": "Stochastic Interpolants: A Unifying Framework for Flows and Diffusions",
+      "arxiv_id": "2303.08797",
+      "arxiv_version": "v4",
+      "source": "https://arxiv.org/pdf/2303.08797",
+      "pages": 80,
+      "bytes": 14140000,
+      "sha256": "729e445e5498c97a87a925ff08f084f741eef2cd4e018e83b898fdea7f19bdef"
+    },
+    {
+      "file": "papers/Diffusion_Policy_2303.04137.pdf",
+      "title": "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion",
+      "arxiv_id": "2303.04137",
+      "arxiv_version": "v5",
+      "source": "https://arxiv.org/pdf/2303.04137",
+      "pages": 19,
+      "bytes": 6192199,
+      "sha256": "b65c474b696a4802d8f1457d86b637ce2c5521412570d3aa928cd54563babc8f"
+    },
+    {
+      "file": "papers/pi0_VLA_Flow_Model_2410.24164.pdf",
+      "title": "pi0: A Vision-Language-Action Flow Model for General Robot Control",
+      "arxiv_id": "2410.24164",
+      "arxiv_version": "v4",
+      "source": "https://arxiv.org/pdf/2410.24164",
+      "pages": 17,
+      "bytes": 7893845,
+      "sha256": "fbdfba56258bdbd220207ba63410c6c943e43a73e97a7a5a47ca0bc74204f821"
+    },
+    {
+      "file": "papers/Streaming_Flow_Policy_2505.21851.pdf",
+      "title": "Streaming Flow Policy: Simplifying Diffusion/Flow-Matching Policies by Treating Action Trajectories as Flow Trajectories",
+      "arxiv_id": "2505.21851",
+      "arxiv_version": "v2",
+      "source": "https://arxiv.org/pdf/2505.21851",
+      "pages": 21,
+      "bytes": 16433948,
+      "sha256": "db5ca54eeeeb6b172d0b159945772932e1b22fd32720664207d349b98ce46726"
+    }
+  ]
+}
+

@@ -1,0 +1,59 @@
+{
+  "euler_nfe1": {
+    "sw2": 2.4223,
+    "off_manifold": 1.0,
+    "mode_tv": 0.222
+  },
+  "euler_nfe2": {
+    "sw2": 0.629,
+    "off_manifold": 0.7573,
+    "mode_tv": 0.0292
+  },
+  "heun_nfe2": {
+    "sw2": 1.6199,
+    "off_manifold": 0.9675,
+    "mode_tv": 0.3237
+  },
+  "euler_nfe4": {
+    "sw2": 0.2345,
+    "off_manifold": 0.2015,
+    "mode_tv": 0.0165
+  },
+  "heun_nfe4": {
+    "sw2": 0.2488,
+    "off_manifold": 0.152,
+    "mode_tv": 0.026
+  },
+  "euler_nfe8": {
+    "sw2": 0.1646,
+    "off_manifold": 0.079,
+    "mode_tv": 0.0125
+  },
+  "heun_nfe8": {
+    "sw2": 0.1412,
+    "off_manifold": 0.0547,
+    "mode_tv": 0.0117
+  },
+  "euler_nfe16": {
+    "sw2": 0.1425,
+    "off_manifold": 0.0422,
+    "mode_tv": 0.0115
+  },
+  "heun_nfe16": {
+    "sw2": 0.1338,
+    "off_manifold": 0.0312,
+    "mode_tv": 0.0103
+  },
+  "euler_nfe64": {
+    "sw2": 0.1352,
+    "off_manifold": 0.027,
+    "mode_tv": 0.0103
+  },
+  "heun_nfe64": {
+    "sw2": 0.1345,
+    "off_manifold": 0.022,
+    "mode_tv": 0.0095
+  },
+  "straightness": 2.5747,
+  "sw2_floor": 0.0886
+}

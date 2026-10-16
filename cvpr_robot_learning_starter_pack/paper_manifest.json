@@ -1,0 +1,164 @@
+[
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\GEAR_VLA_2606.08530.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\GEAR_VLA_2606.08530.pdf",
+    "bytes": 5768252,
+    "pages": 21,
+    "text_chars": 70371,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\GEAR_VLA_2606.08530.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\Geometric_Action_Model_2606.17046.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\Geometric_Action_Model_2606.17046.pdf",
+    "bytes": 9206989,
+    "pages": 22,
+    "text_chars": 66490,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\Geometric_Action_Model_2606.17046.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\GuidedVLA_2605.12369.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\GuidedVLA_2605.12369.pdf",
+    "bytes": 48739410,
+    "pages": 40,
+    "text_chars": 130425,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\GuidedVLA_2605.12369.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\Spatial_Forcing_2510.12276.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\Spatial_Forcing_2510.12276.pdf",
+    "bytes": 1990671,
+    "pages": 19,
+    "text_chars": 67719,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\Spatial_Forcing_2510.12276.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\VGGT_2503.11651.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\VGGT_2503.11651.pdf",
+    "bytes": 3161073,
+    "pages": 20,
+    "text_chars": 92706,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\VGGT_2503.11651.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\VGGT_Omega_2605.15195.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\VGGT_Omega_2605.15195.pdf",
+    "bytes": 30763791,
+    "pages": 28,
+    "text_chars": 138429,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\VGGT_Omega_2605.15195.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\01_geometry_aware_vla\\papers\\Vision_Transformers_Need_Registers_2309.16588.pdf",
+    "relative_path": "01_geometry_aware_vla\\papers\\Vision_Transformers_Need_Registers_2309.16588.pdf",
+    "bytes": 6018622,
+    "pages": 21,
+    "text_chars": 53335,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\Vision_Transformers_Need_Registers_2309.16588.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\02_4d_world_action_models\\papers\\GEM_4D_2605.22882.pdf",
+    "relative_path": "02_4d_world_action_models\\papers\\GEM_4D_2605.22882.pdf",
+    "bytes": 4585793,
+    "pages": 20,
+    "text_chars": 51099,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\GEM_4D_2605.22882.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\02_4d_world_action_models\\papers\\GeoSem_WAM_2606.03188.pdf",
+    "relative_path": "02_4d_world_action_models\\papers\\GeoSem_WAM_2606.03188.pdf",
+    "bytes": 17559227,
+    "pages": 14,
+    "text_chars": 43883,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\GeoSem_WAM_2606.03188.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\02_4d_world_action_models\\papers\\WAM4D_2606.14048.pdf",
+    "relative_path": "02_4d_world_action_models\\papers\\WAM4D_2606.14048.pdf",
+    "bytes": 3658276,
+    "pages": 19,
+    "text_chars": 62686,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\WAM4D_2606.14048.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\02_4d_world_action_models\\papers\\X_WAM_2604.26694.pdf",
+    "relative_path": "02_4d_world_action_models\\papers\\X_WAM_2604.26694.pdf",
+    "bytes": 3552431,
+    "pages": 21,
+    "text_chars": 74282,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\X_WAM_2604.26694.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\03_streaming_intent_policy\\papers\\Diffusion_Policy_2303.04137.pdf",
+    "relative_path": "03_streaming_intent_policy\\papers\\Diffusion_Policy_2303.04137.pdf",
+    "bytes": 6192199,
+    "pages": 19,
+    "text_chars": 101951,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\Diffusion_Policy_2303.04137.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\03_streaming_intent_policy\\papers\\IntentVLA_2605.14712.pdf",
+    "relative_path": "03_streaming_intent_policy\\papers\\IntentVLA_2605.14712.pdf",
+    "bytes": 1816829,
+    "pages": 17,
+    "text_chars": 66222,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\IntentVLA_2605.14712.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\03_streaming_intent_policy\\papers\\Streaming_Flow_Policy_2505.21851.pdf",
+    "relative_path": "03_streaming_intent_policy\\papers\\Streaming_Flow_Policy_2505.21851.pdf",
+    "bytes": 16433948,
+    "pages": 21,
+    "text_chars": 67095,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\Streaming_Flow_Policy_2505.21851.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\04_jepa_world_models\\papers\\LeJEPA_2511.08544.pdf",
+    "relative_path": "04_jepa_world_models\\papers\\LeJEPA_2511.08544.pdf",
+    "bytes": 8758154,
+    "pages": 50,
+    "text_chars": 143514,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\LeJEPA_2511.08544.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\04_jepa_world_models\\papers\\V_JEPA_2404.08471.pdf",
+    "relative_path": "04_jepa_world_models\\papers\\V_JEPA_2404.08471.pdf",
+    "bytes": 4601259,
+    "pages": 23,
+    "text_chars": 92341,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\V_JEPA_2404.08471.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\04_jepa_world_models\\papers\\V_JEPA_2_1_2603.14482.pdf",
+    "relative_path": "04_jepa_world_models\\papers\\V_JEPA_2_1_2603.14482.pdf",
+    "bytes": 37389706,
+    "pages": 37,
+    "text_chars": 130236,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\V_JEPA_2_1_2603.14482.txt"
+  },
+  {
+    "path": "D:\\opd\\survey_agent\\output\\cvpr_robot_learning_starter_pack\\04_jepa_world_models\\papers\\V_JEPA_2_2506.09985.pdf",
+    "relative_path": "04_jepa_world_models\\papers\\V_JEPA_2_2506.09985.pdf",
+    "bytes": 20240380,
+    "pages": 48,
+    "text_chars": 175963,
+    "valid": true,
+    "text_path": "D:\\opd\\survey_agent\\tmp\\cvpr_paper_text\\V_JEPA_2_2506.09985.txt"
+  }
+]
